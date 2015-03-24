@@ -18,7 +18,7 @@
 #include <getopt.h>
 
 #include "debug.h"
-#include "event.h"
+#include "service.h"
 
 static void input_handler(void *args)
 {
@@ -64,4 +64,3 @@ int main(int argc, char **argv)
     event_wait(&ev);
     return EXIT_FAILURE;
 }
-
