@@ -40,16 +40,13 @@ static inline void event_add(struct event *ev, int fd, void (*handler)(void *arg
     ev->handlers[fd].args = args;
 }
 
-static inline void event_wait(struct event *ev)
+static inline void event_wait(struct event *ev, int timeout)
 {
-    while(1)
+    struct epoll_event event;
+    if(epoll_wait(ev->epfd, &event, 1, timeout) == 1)
     {
-        struct epoll_event event;
-        if(epoll_wait(ev->epfd, &event, 1, -1) == 1)
-        {
-            assert(ev->handlers[event.data.fd].handler);
-            ev->handlers[event.data.fd].handler(ev->handlers[event.data.fd].args);
-        }
+        assert(ev->handlers[event.data.fd].handler);
+        ev->handlers[event.data.fd].handler(ev->handlers[event.data.fd].args);
     }
 }
 
