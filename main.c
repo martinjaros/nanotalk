@@ -21,28 +21,27 @@
 #include "util.h"
 #include "service.h"
 
-static void input_handler(void *args)
+static void input_handler(struct service *sv)
 {
-    struct service *sv = (struct service*)args;
-    char buffer[128], *str = fgets(buffer, sizeof(buffer), stdin);
-    if(!str) exit(EXIT_SUCCESS);
-
-    if((strlen(str) == 46) && (memcmp(str, "DIAL ", 5) == 0))
+    char buffer[128];
+    if(fgets(buffer, sizeof(buffer), stdin) == NULL) exit(1);
+    if((strlen(buffer) == 46) && (memcmp(buffer, "DIAL ", 5) == 0))
     {
         uint8_t uid[20];
-        if(str2hex(str + 5, uid, 20)) service_dial(sv, uid); else WARN("Hex parse error");
+        if(str2hex(buffer + 5, uid, 20)) service_dial(sv, uid); else WARN("Hex parse error");
     }
-    else if(strcmp(str, "ANSWER\n") == 0) service_answer(sv);
-    else if(strcmp(str, "HANGUP\n") == 0) service_hangup(sv);
+    else if(strcmp(buffer, "ANSWER\n") == 0) service_answer(sv);
+    else if(strcmp(buffer, "HANGUP\n") == 0) service_hangup(sv);
     else INFO("Unknown input");
 }
 
-static void service_handler(const uint8_t uid[20], void *args)
+static void service_handler(const uint8_t uid[20])
 {
     if(uid)
     {
         char buffer[46] = "RING ";
-        hex2str(uid, buffer + 5, 20); puts(buffer);
+        hex2str(uid, buffer + 5, 20);
+        puts(buffer);
     }
     else puts("HANGUP");
 }
@@ -76,21 +75,20 @@ int main(int argc, char **argv)
     {
         switch (index)
         {
-            case 0: puts(help); return EXIT_SUCCESS;
-            case 1: puts(version); return EXIT_SUCCESS;
+            case 0: puts(help); return 0;
+            case 1: puts(version); return 0;
             case 2: port = atol(optarg); break;
             case 3: keyfile = optarg; break;
             case 4: debug = atol(optarg); break;
         }
     }
 
-    char service_container[service_sizeof()];
-    struct service *sv = (struct service*)service_container;
-    struct event ev;
-
     debug_setlevel(debug);
-    event_init(&ev);
-    service_init(sv, &ev, port, keyfile, service_handler, sv);
-    event_add(&ev, 0, input_handler, sv);
+    INFO("Initializing: port = %d, keyfile = %s", port, keyfile);
+
+    struct event ev; event_init(&ev);
+    char container[service_sizeof()]; struct service *sv = (struct service*)container;
+    service_init(sv, &ev, port, keyfile, service_handler);
+    event_add(&ev, 0, (void(*)(void*))input_handler, sv);
     while(1) event_wait(&ev, -1);
 }
