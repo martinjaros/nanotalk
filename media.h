@@ -12,15 +12,18 @@
  * GNU General Public License for more details.
  */
 
-#ifndef DEBUG_H
-#define DEBUG_H
+#ifndef MEDIA_H
+#define MEDIA_H
 
-#define ERROR(msg, ...) debug_printf(1, __FILE__, __LINE__, msg, ##__VA_ARGS__)
-#define WARN(msg, ...)  debug_printf(2, __FILE__, __LINE__, msg, ##__VA_ARGS__)
-#define INFO(msg, ...)  debug_printf(3, __FILE__, __LINE__, msg, ##__VA_ARGS__)
-#define DEBUG(msg, ...) debug_printf(4, __FILE__, __LINE__, msg, ##__VA_ARGS__)
+struct media;
 
-void debug_setlevel(int level);
-void debug_printf(int level, const char *file, int line, const char *msg, ...);
+size_t media_sizeof();
+void media_init(struct media *media);
 
-#endif /* DEBUG_H */
+void media_start(struct media *media);
+void media_stop(struct media *media);
+
+void media_push(struct media *media, uint8_t *buffer, size_t len);
+size_t media_pull(struct media *media, uint8_t *buffer, size_t len);
+
+#endif /* MEDIA_H */

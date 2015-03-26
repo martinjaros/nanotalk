@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 - Martin Jaros <xjaros32@stud.feec.vutbr.cz>
+ * Copyright (C) 2015 - Martin Jaros <xjaros32@stud.feec.vutbr.cz>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -49,4 +49,3 @@ void debug_printf(int level, const char *file, int line, const char *msg, ...)
 
     fwrite(buffer, 1, num + vnum + 1, stderr);
 }
-

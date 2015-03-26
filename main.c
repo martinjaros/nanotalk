@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 - Martin Jaros <xjaros32@stud.feec.vutbr.cz>
+ * Copyright (C) 2015 - Martin Jaros <xjaros32@stud.feec.vutbr.cz>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
