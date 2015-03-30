@@ -13,6 +13,7 @@
  */
 
 #include <assert.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
@@ -22,11 +23,19 @@
 
 #include "debug.h"
 #include "service.h"
+#include "util.h"
 #include "route.h"
 #include "crypto.h"
 #include "media.h"
 
 enum { MESSAGE_ROUTE_REQ, MESSAGE_ROUTE_RES, MESSAGE_KEY_REQ, MESSAGE_KEY_RES, MESSAGE_PAYLOAD };
+
+struct msg_route
+{
+    uint8_t id, src[20], dst[20];
+    struct route_node nodes[0];
+}
+__attribute__((packed));
 
 struct msg_payload
 {
@@ -41,6 +50,7 @@ struct service
     enum { STATE_IDLE, STATE_RINGING, STATE_LOOKUP, STATE_HANDSHAKE, STATE_ESTABLISHED } state;
     int sockfd, timerfd;
 
+    FILE *cache;
     uint8_t srcid[20], dstid[20];
     struct route table[157], lookup;
     struct sockaddr_in addr;
@@ -57,6 +67,21 @@ struct service
 
 size_t service_sizeof() { return sizeof(struct service) + crypto_sizeof() + media_sizeof(); }
 
+static void lookup_handler(struct service *sv)
+{
+    if(sv->lookup.offset == sv->lookup.count) { WARN("No route"); sv->state = STATE_IDLE; sv->handler(NULL); return; }
+    struct msg_route msg = { MESSAGE_ROUTE_REQ };
+    memcpy(msg.src, sv->srcid, 20);
+    memcpy(msg.dst, sv->dstid, 20);
+    int i; for(i = 0; i < 3; i++)
+    {
+        struct sockaddr_in addr = { AF_INET, sv->lookup.nodes[sv->lookup.offset].port, { sv->lookup.nodes[sv->lookup.offset].addr } };
+        INFO("Sending route request to %s:%hu", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+        int res = sendto(sv->sockfd, &msg, sizeof(msg), 0, (struct sockaddr*)&addr, sizeof(addr)); assert(res > 0);
+        if(++sv->lookup.offset == sv->lookup.count) break;
+    }
+}
+
 static void socket_handler(struct service *sv)
 {
     size_t len = 0;
@@ -66,25 +91,64 @@ static void socket_handler(struct service *sv)
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(addr);
     res = recvfrom(sv->sockfd, buffer, len, 0, (struct sockaddr*)&addr, &addrlen); assert((res == len) && (addrlen == sizeof(addr)));
-    DEBUG("Received datagram from `%s:%hu, len = %d`", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port), len);
-    if(len == 0) return;
+    if(len == 0) { WARN("Empty datagram"); return; }
 
     switch(buffer[0])
     {
         case MESSAGE_ROUTE_REQ:
         {
-            // TODO
+            struct msg_route *request = (struct msg_route*)buffer;
+            route_add(sv->table, sv->srcid, request->src, addr.sin_addr.s_addr, addr.sin_port);
+            char tmp[sizeof(struct msg_route) + sizeof(struct route)];
+            struct route *lookup = (struct route*)(tmp + sizeof(struct msg_route));
+            route_lookup(sv->table, sv->srcid, request->dst, lookup);
+            INFO("Route request from %s:%hu, have %d nodes", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port), lookup->count);
+
+            struct msg_route *response = (struct msg_route*)tmp;
+            response->id = MESSAGE_ROUTE_RES;
+            memcpy(response->src, sv->srcid, 20);
+            memcpy(response->dst, request->dst, 20);
+            len = lookup->count * sizeof(struct route_node) + sizeof(struct msg_route);
+            res = sendto(sv->sockfd, response, len, 0, (struct sockaddr*)&addr, sizeof(addr)); assert(res > 0);
             break;
         }
 
         case MESSAGE_ROUTE_RES:
         {
-            // TODO
+            if(sv->state != STATE_LOOKUP) { WARN("Bad state for route response (%d)", sv->state); return; }
+            if(len < sizeof(struct msg_route)) { WARN("Route too short"); return; }
+            struct msg_route *msg = (struct msg_route*)buffer;
+            if(memcmp(msg->dst, sv->dstid, 20) != 0) { WARN("Route ID mismatch"); return; }
+            uint8_t count = (len - sizeof(struct msg_route)) / sizeof(struct route_node); count = count > 20 ? 20 : count;
+            if(count > 0)
+            {
+                // TODO route_merge()
+                char a[40], b[40]; hex2str(sv->lookup.nodes[0].id, a, 20); hex2str(sv->dstid, b, 20);
+                INFO("Have %.40s, need %.40s", a, b);
+
+                if(memcmp(sv->lookup.nodes[0].id, sv->dstid, 20) == 0)
+                {
+                    memcpy(&sv->addr, &addr, sizeof(addr));
+                    sv->state = STATE_HANDSHAKE;
+                    sv->keybuf[0] = MESSAGE_KEY_REQ;
+                    sv->keylen = crypto_keyout(sv->crypto, sv->keybuf + 1, sizeof(sv->keybuf) - 1) + 1;
+                    INFO("Lookup done; sending keys, size = %d", sv->keylen);
+                    int res = sendto(sv->sockfd, sv->keybuf, sv->keylen, 0, (struct sockaddr*)&sv->addr, sizeof(struct sockaddr_in)); assert(res > 0);
+                    struct itimerspec its = { { 3, 0 }, { 3, 0 } };
+                    res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);
+                    return;
+                }
+            }
+
+            struct itimerspec its = { { 1, 0 }, { 1, 0 } };
+            int res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);
+            lookup_handler(sv);
             break;
         }
 
         case MESSAGE_KEY_REQ:
         {
+            if(sv->state == STATE_RINGING) return;
             if(sv->state == STATE_IDLE)
             {
                 if(!crypto_keyin(sv->crypto, buffer + 1, len - 1, sv->dstid)) { WARN("Verification failed"); return; }
@@ -99,26 +163,25 @@ static void socket_handler(struct service *sv)
                 INFO("Sending keys (response), size = %d", sv->keylen);
                 res = sendto(sv->sockfd, sv->keybuf, sv->keylen, 0, (struct sockaddr*)&addr, sizeof(addr)); assert(res > 0);
             }
-            else WARN("Bad state for key req (%d)", sv->state); // STATE_RINGING, STATE_LOOKUP, STATE_HANDSHAKE
+            else WARN("Bad state for key request (%d)", sv->state); // STATE_LOOKUP, STATE_HANDSHAKE
             break;
         }
 
         case MESSAGE_KEY_RES:
         {
             uint8_t tmp[20];
-            if(sv->state != STATE_HANDSHAKE) { WARN("Bad state for key res (%d)", sv->state); return; }
+            if(sv->state != STATE_HANDSHAKE) { WARN("Bad state for key response (%d)", sv->state); return; }
             if(memcmp(&sv->addr, &addr, sizeof(addr)) != 0) { WARN("Address mismatch"); return; }
             if(!crypto_keyin(sv->crypto, buffer + 1, len - 1, tmp)) { WARN("Verification failed"); return; }
             if(memcmp(tmp, sv->dstid, 20) != 0) { WARN("Peer ID mismatch"); return; }
             crypto_derive(sv->crypto);
             sv->state = STATE_ESTABLISHED;
-            sv->seqnum_capture = 0;
-            sv->seqnum_playback = 0;
 
             INFO("Connected to %s:%hu", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+            media_start(sv->media);
+            sv->seqnum_capture = sv->seqnum_playback = 0;
             struct itimerspec its = { { 0, 20000000 }, { 0, 20000000 } };
             res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);
-            media_start(sv->media);
             break;
         }
 
@@ -128,10 +191,10 @@ static void socket_handler(struct service *sv)
             if(memcmp(&sv->addr, &addr, sizeof(addr)) != 0) { WARN("Address mismatch"); return; }
             if(len < sizeof(struct msg_payload)) { WARN("Payload too short"); return; }
             struct msg_payload *msg = (struct msg_payload*)buffer;
+            uint8_t tmp[len - sizeof(struct msg_payload)];
             uint32_t seqnum = ntohl(msg->seqnum);
 
             if(seqnum < sv->seqnum_playback) { WARN("Out of sequence %d < %d", seqnum, sv->seqnum_playback); return; }
-            uint8_t tmp[len - sizeof(struct msg_payload)];
             if(crypto_decipher(sv->crypto, seqnum, msg->tag, msg->data, tmp, sizeof(tmp)) == 0) { WARN("Corrupted message"); return; }
             if(sizeof(tmp) == 0)
             {
@@ -143,20 +206,21 @@ static void socket_handler(struct service *sv)
                 sv->handler(NULL);
                 return;
             }
+
             if(seqnum > sv->seqnum_playback)
             {
                 WARN("Packet lost");
-                sv->seqnum_playback = seqnum;
                 media_push(sv->media, NULL, 0);
+                sv->seqnum_playback = seqnum;
             }
+            sv->seqnum_playback++;
 
             media_push(sv->media, tmp, sizeof(tmp));
-            sv->seqnum_playback++;
             break;
         }
 
         default:
-            WARN("Unknown message type = %d", buffer[0]);
+            WARN("Unknown message id (%d) from %s:%hu, len = %d", buffer[0], inet_ntoa(addr.sin_addr), ntohs(addr.sin_port), len);
     }
 }
 
@@ -169,17 +233,13 @@ static void timer_handler(struct service *sv)
     switch(sv->state)
     {
         case STATE_LOOKUP:
-        {
-            // TODO
+            lookup_handler(sv);
             break;
-        }
 
         case STATE_HANDSHAKE:
-        {
-            INFO("Sending keys (request), size = %d", sv->keylen);
+            DEBUG("Sending keys (timeout), size = %d", sv->keylen);
             res = sendto(sv->sockfd, sv->keybuf, sv->keylen, 0, (struct sockaddr*)&sv->addr, sizeof(struct sockaddr_in)); assert(res > 0);
             break;
-        }
 
         case STATE_ESTABLISHED:
         {
@@ -197,7 +257,7 @@ static void timer_handler(struct service *sv)
         }
 
         default: // STATE_IDLE, STATE_RINGING
-            DEBUG("No work for timer");
+            WARN("No work for timer");
     }
 }
 
@@ -206,9 +266,8 @@ void service_dial(struct service *sv, const uint8_t uid[20])
     if(sv->state != STATE_IDLE) { WARN("Bad state to dial (%d)", sv->state); return; }
     sv->state = STATE_LOOKUP;
     memcpy(sv->dstid, uid, 20);
-
-    // TODO
-
+    route_lookup(sv->table, sv->srcid, sv->dstid, &sv->lookup);
+    lookup_handler(sv);
     struct itimerspec its = { { 1, 0 }, { 1, 0 } };
     int res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);
 }
@@ -217,15 +276,14 @@ void service_answer(struct service *sv)
 {
     if(sv->state != STATE_RINGING) { WARN("Bad state to answer (%d)", sv->state); return; }
     sv->state = STATE_ESTABLISHED;
-    sv->seqnum_capture = 0;
-    sv->seqnum_playback = 0;
     sv->keybuf[0] = MESSAGE_KEY_RES;
     sv->keylen = crypto_keyout(sv->crypto, sv->keybuf + 1, sizeof(sv->keybuf) - 1) + 1;
-
-    INFO("Sending keys (response), size = %d", sv->keylen);
+    INFO("Sending keys, size = %d", sv->keylen);
     int res = sendto(sv->sockfd, sv->keybuf, sv->keylen, 0, (struct sockaddr*)&sv->addr, sizeof(struct sockaddr_in)); assert(res > 0);
     crypto_derive(sv->crypto);
+
     media_start(sv->media);
+    sv->seqnum_capture = sv->seqnum_playback = 0;
     struct itimerspec its = { { 0, 20000000 }, { 0, 20000000 } };
     res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);
 }
@@ -238,6 +296,7 @@ void service_hangup(struct service *sv)
         struct itimerspec its = { { 0, 0 }, { 0, 0 } };
         int res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);
     }
+
     if(sv->state == STATE_ESTABLISHED)
     {
         INFO("Disconnecting");
@@ -249,9 +308,22 @@ void service_hangup(struct service *sv)
     sv->state = STATE_IDLE;
 }
 
-void service_init(struct service *sv, struct event *ev, uint16_t port, const char *keyfile, void (*handler)(const uint8_t uid[20]))
+void service_cache(struct service *sv)
+{
+    if(freopen(NULL, "w", sv->cache) == NULL) { ERROR("Cannot write to cache file"); abort(); }
+    int i, j, n = 0; for(i = 0; i < 157; i++) for(j = 0; j < sv->table[i].count; j++, n++)
+    {
+        char id[40]; hex2str(sv->table[i].nodes[j].id, id, 20);
+        struct in_addr addr = { sv->table[i].nodes[j].addr };
+        int res = fprintf(sv->cache, "%.40s %s:%hu\n", id, inet_ntoa(addr), ntohs(sv->table[i].nodes[j].port)); assert(res > 0);
+    }
+    fflush(sv->cache); INFO("Saved %d nodes", n);
+}
+
+void service_init(struct service *sv, struct event *ev, uint16_t port, const char *keyfile, const char *cachefile, void (*handler)(const uint8_t uid[20]))
 {
     sv->state = STATE_IDLE;
+    sv->handler = handler;
     sv->timerfd = timerfd_create(CLOCK_MONOTONIC, 0); assert(sv->timerfd > 0);
     event_add(ev, sv->timerfd, (void(*)(void*))timer_handler, sv);
 
@@ -267,5 +339,16 @@ void service_init(struct service *sv, struct event *ev, uint16_t port, const cha
     crypto_init(sv->crypto, keyfile, sv->srcid);
     sv->media = (struct media*)((void*)sv + sizeof(struct service) + crypto_sizeof());
     media_init(sv->media);
-    sv->handler = handler;
+
+    char tmp[128], n = 0;
+    sv->cache = fopen(cachefile, "r"); if(sv->cache == NULL) { ERROR("Cannot open `%s`", cachefile); abort(); }
+    while(fgets(tmp, sizeof(tmp), sv->cache))
+    {
+        uint8_t id[20]; char str_addr[16];
+        struct in_addr addr; uint16_t port;
+        if((strlen(tmp) > 40) && str2hex(tmp, id, 20) && (sscanf(tmp + 40, " %15[^:]:%hu", str_addr, &port) == 2) && inet_aton(str_addr, &addr))
+            { route_add(sv->table, sv->srcid, id, addr.s_addr, htons(port)); n++; }
+    }
+
+    hex2str(sv->srcid, tmp, 20); INFO("Loaded %d nodes; user ID is %.40s", n, tmp);
 }

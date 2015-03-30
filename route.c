@@ -16,11 +16,10 @@
 #include <stdlib.h>
 
 #include "route.h"
-#include "debug.h"
 
 static int compare(const void *a, const void *b) { return memcmp(*(void**)a, *(void**)b, 20); }
 
-void route_init(struct route table[157]) { int i; for(i = 0; i < 157; i++) table[i].count = 0; }
+void route_init(struct route table[157]) { int i; for(i = 0; i < 157; i++) table[i].offset = table[i].count = 0; }
 
 void route_add(struct route table[157], const uint8_t srcid[20], const uint8_t dstid[20], uint32_t addr, uint16_t port)
 {
@@ -28,21 +27,20 @@ void route_add(struct route table[157], const uint8_t srcid[20], const uint8_t d
     int i, depth = 0;
     for(i = 0; i < 20; i++) metric[i] = srcid[i] ^ dstid[i];
     while((metric[depth / 8] & (1 << (7 - depth % 8))) == 0) if(++depth == 156) break;
-    if(table[depth].count == 20)
-    {
-        memmove(&table[depth].nodes[0], &table[depth].nodes[1], sizeof(struct route_node) * 19);
-        table[depth].count--;
-    }
+    for(i = 0; i < table[depth].count; i++) if(memcmp(table[depth].nodes[i].id, dstid, 20) == 0) goto match;
+    i = table[depth].offset;
+    if(table[depth].count < 20) table[depth].count++;
+    if(++table[depth].offset == 20) table[depth].offset = 0;
 
-    memcpy(table[depth].nodes[table[depth].count].id, dstid, 20);
-    table[depth].nodes[table[depth].count].addr = addr;
-    table[depth].nodes[table[depth].count].port = port;
-    table[depth].count++;
+match:
+    memcpy(table[depth].nodes[i].id, dstid, 20);
+    table[depth].nodes[i].addr = addr;
+    table[depth].nodes[i].port = port;
 }
 
 void route_lookup(const struct route table[157], const uint8_t srcid[20], const uint8_t dstid[20], struct route *result)
 {
-    result->count = 0;
+    result->offset = result->count = 0;
     uint8_t metric[20];
     int i, depth = 0, dir = 1;
     for(i = 0; i < 20; i++) metric[i] = srcid[i] ^ dstid[i];
@@ -83,7 +81,7 @@ void route_merge(const struct route *a, const struct route *b, const uint8_t dst
     for(n = 0; n < a->count; n++) for(i = 0; i < 20; i++) ametrics[n][i] = a->nodes[n].id[i] ^ dstid[i];
     for(n = 0; n < b->count; n++) for(i = 0; i < 20; i++) bmetrics[n][i] = b->nodes[n].id[i] ^ dstid[i];
 
-    result->count = 0;
+    result->offset = result->count = 0;
     int aindex = 0, bindex = 0, count = a->count + b->count;
     while(count-- > 0)
     {

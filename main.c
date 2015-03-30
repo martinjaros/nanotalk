@@ -24,7 +24,7 @@
 static void input_handler(struct service *sv)
 {
     char buffer[128];
-    if(fgets(buffer, sizeof(buffer), stdin) == NULL) exit(1);
+    if(fgets(buffer, sizeof(buffer), stdin) == NULL) { service_cache(sv); exit(0); }
     if((strlen(buffer) == 46) && (memcmp(buffer, "DIAL ", 5) == 0))
     {
         uint8_t uid[20];
@@ -49,11 +49,12 @@ static void service_handler(const uint8_t uid[20])
 int main(int argc, char **argv)
 {
     const char* help = "Usage: dvsd [OPTIONS]\n"
-        "   --help          Print this message\n"
-        "   --version       Print the version number\n"
-        "   --port=NUM      Set port number, default 5004\n"
-        "   --keyfile=FILE  Set key file path, default `key.pem`\n"
-        "   --debug=NUM     Set trace verbosity (0 - none, 1 - error, 2 - warn, 3 - info, 4 - debug), default 3\n";
+        "   --help              Print this message\n"
+        "   --version           Print the version number\n"
+        "   --port=NUM          Set port number, default 5004\n"
+        "   --keyfile=FILE      Set key file path, default `key.pem`\n"
+        "   --cachefile=FILE    Set cache file path, default `cache.txt`\n"
+        "   --debug=NUM         Set trace verbosity (0 - none, 1 - error, 2 - warn, 3 - info, 4 - debug), default 3\n";
 
     const char* version =
         "Distributed VoIP service daemon " PACKAGE_VERSION "\n"
@@ -61,15 +62,16 @@ int main(int argc, char **argv)
 
     const struct option options[] =
     {
-        { "help",     no_argument,       0, 0 },
-        { "version",  no_argument,       0, 0 },
-        { "port",     required_argument, 0, 0 },
-        { "keyfile",  required_argument, 0, 0 },
-        { "debug",    required_argument, 0, 0 },
-        { NULL,       0,                 0, 0 }
+        { "help",      no_argument,       0, 0 },
+        { "version",   no_argument,       0, 0 },
+        { "port",      required_argument, 0, 0 },
+        { "keyfile",   required_argument, 0, 0 },
+        { "cachefile", required_argument, 0, 0 },
+        { "debug",     required_argument, 0, 0 },
+        { NULL,        0,                 0, 0 }
     };
 
-    char *keyfile = "key.pem";
+    char *keyfile = "key.pem", *cachefile = "cache.txt";
     int index = 0, debug = 3, port = 5004;
     while(getopt_long(argc, argv, "", options, &index) == 0)
     {
@@ -79,16 +81,17 @@ int main(int argc, char **argv)
             case 1: puts(version); return 0;
             case 2: port = atol(optarg); break;
             case 3: keyfile = optarg; break;
-            case 4: debug = atol(optarg); break;
+            case 4: cachefile = optarg; break;
+            case 5: debug = atol(optarg); break;
         }
     }
 
     debug_setlevel(debug);
-    INFO("Initializing: port = %d, keyfile = %s", port, keyfile);
+    INFO("Initializing: port = %d, keyfile = %s, cachefile = %s", port, keyfile, cachefile);
 
     struct event ev; event_init(&ev);
     char container[service_sizeof()]; struct service *sv = (struct service*)container;
-    service_init(sv, &ev, port, keyfile, service_handler);
+    service_init(sv, &ev, port, keyfile, cachefile, service_handler);
     event_add(&ev, 0, (void(*)(void*))input_handler, sv);
     while(1) event_wait(&ev, -1);
 }

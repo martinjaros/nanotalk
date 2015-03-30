@@ -21,7 +21,7 @@ inline static int str2hex(const char *str, uint8_t *hex, size_t n)
 {
     int i; for(i = 0; i < n; i++)
     {
-        char cl = str[i * 2], ch = str[i * 2 + 1];
+        char ch = str[i * 2], cl = str[i * 2 + 1];
         if((cl >= '0') && (cl <= '9')) cl -= '0'; else if((cl >='A') && (cl <= 'F')) cl += 10 - 'A'; else return 0;
         if((ch >= '0') && (ch <= '9')) ch -= '0'; else if((ch >='A') && (ch <= 'F')) ch += 10 - 'A'; else return 0;
         hex[i] = (ch << 4) + cl;

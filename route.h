@@ -26,7 +26,7 @@ struct route
         uint16_t port;
     }
     __attribute__((packed)) nodes[20];
-    uint8_t count;
+    uint8_t count, offset;
 };
 
 void route_init(struct route table[157]);

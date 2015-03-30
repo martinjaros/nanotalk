@@ -67,7 +67,7 @@ size_t crypto_keyout(struct crypto *crypto, void *buffer, size_t len)
     res = EVP_DigestSignFinal(&ctx, ptr, &siglen); assert(res == 1);
     EVP_MD_CTX_cleanup(&ctx);
 
-    INFO("dhkey_len=%d, sigkey_len=%d, siglen=%d", dhkey_len, sigkey_len, siglen);
+    DEBUG("Keygen: dhkey_len = %d, sigkey_len = %d, siglen = %d", dhkey_len, sigkey_len, siglen);
     return dhkey_len + sigkey_len + siglen;
 }
 
