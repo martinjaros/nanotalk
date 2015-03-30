@@ -21,6 +21,9 @@
 #include "debug.h"
 #include "media.h"
 
+#define DEVICE_CAPTURE  "default"
+#define DEVICE_PLAYBACK "default"
+
 struct media
 {
     int timerfd;
@@ -33,11 +36,11 @@ size_t media_sizeof() { return sizeof(struct media) + opus_encoder_get_size(1) +
 
 void media_init(struct media *media)
 {
-    if(snd_pcm_open(&media->playback, "default", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) ||
+    if(snd_pcm_open(&media->playback, DEVICE_PLAYBACK, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) ||
        snd_pcm_set_params(media->playback, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 2, 48000, 1, 40000))
     { ERROR("Cannot open playback device"); abort(); }
 
-    if(snd_pcm_open(&media->capture, "default", SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK) ||
+    if(snd_pcm_open(&media->capture, DEVICE_CAPTURE, SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK) ||
        snd_pcm_set_params(media->capture, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 1, 48000, 1, 40000))
     { ERROR("Cannot open capture device"); abort(); }
 
@@ -62,19 +65,16 @@ void media_stop(struct media *media)
 size_t media_pull(struct media *media, uint8_t *buffer, size_t len)
 {
     int16_t samples[960];
-    int res;
-
-again:
-    res = snd_pcm_readi(media->capture, samples, 960);
+    int res = snd_pcm_readi(media->capture, samples, 960);
     if(res < 0)
     {
         WARN("%s", snd_strerror(res));
-        if(snd_pcm_prepare(media->capture) != 0) { ERROR("Cannot recover device"); abort(); }
-        goto again;
+        res = snd_pcm_prepare(media->capture);
+        if(res != 0) { ERROR("Cannot recover device"); abort(); }
     }
     DEBUG("Read %d/960 frames", res);
 
-    while(res < 960) samples[res++] = 0;
+    memset(samples + res, 0, 2 * (960 - res));
     res = opus_encode(media->encoder, samples, 960, buffer, len); assert(res > 0);
     return res;
 }
@@ -87,13 +87,12 @@ void media_push(struct media *media, uint8_t *buffer, size_t len)
     if((res == OPUS_INVALID_PACKET) || (res < 960)) { WARN("Invalid packet"); return; };
     assert(res > 0);
 
-again:
     res = snd_pcm_writei(media->playback, samples, 960);
     if(res < 0)
     {
         WARN("%s", snd_strerror(res));
-        if(snd_pcm_prepare(media->playback) != 0) { ERROR("Cannot recover device"); abort(); }
-        goto again;
+        res = snd_pcm_prepare(media->playback);
+        if(res != 0) { ERROR("Cannot recover device"); abort(); }
     }
     DEBUG("Written %d/960 frames", res);
 }
