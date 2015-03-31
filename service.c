@@ -69,7 +69,15 @@ size_t service_sizeof() { return sizeof(struct service) + crypto_sizeof() + medi
 
 static void lookup_handler(struct service *sv)
 {
-    if(sv->lookup.offset == sv->lookup.count) { WARN("No route"); sv->state = STATE_IDLE; sv->handler(NULL); return; }
+    if(sv->lookup.offset == sv->lookup.count)
+    {
+        WARN("No route");
+        sv->state = STATE_IDLE;
+        sv->handler(NULL);
+        struct itimerspec its = { { 0, 0 }, { 0, 0 } };
+        int res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);
+        return;
+    }
     if(memcmp(sv->lookup.nodes[sv->lookup.offset].id, sv->dstid, 20) == 0)
     {
         sv->addr.sin_family = AF_INET;
@@ -134,9 +142,8 @@ static void socket_handler(struct service *sv)
             if(len < sizeof(struct msg_route)) { WARN("Route too short"); return; }
             struct msg_route *msg = (struct msg_route*)buffer;
             if(memcmp(msg->dst, sv->dstid, 20) != 0) { WARN("Route ID mismatch"); return; }
-            uint8_t count = (len - sizeof(struct msg_route)) / sizeof(struct route_node); count = count > 20 ? 20 : count;
-
-            // TODO route_merge()
+            uint8_t count = (len - sizeof(struct msg_route)) / sizeof(struct route_node);
+            if(count) route_merge(msg->nodes, count < 20 ? count : 20, msg->src, msg->dst, &sv->lookup);
 
             struct itimerspec its = { { 1, 0 }, { 1, 0 } };
             int res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);

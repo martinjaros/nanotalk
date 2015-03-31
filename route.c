@@ -74,32 +74,32 @@ void route_lookup(const struct route table[157], const uint8_t srcid[20], const 
     }
 }
 
-void route_merge(const struct route *a, const struct route *b, const uint8_t dstid[20], struct route *result)
+void route_merge(const struct route_node *source, uint8_t count, const uint8_t srcid[20], const uint8_t dstid[20], struct route *dest)
 {
-    int i, n;
-    uint8_t ametrics[a->count][20], bmetrics[b->count][20];
-    for(n = 0; n < a->count; n++) for(i = 0; i < 20; i++) ametrics[n][i] = a->nodes[n].id[i] ^ dstid[i];
-    for(n = 0; n < b->count; n++) for(i = 0; i < 20; i++) bmetrics[n][i] = b->nodes[n].id[i] ^ dstid[i];
+    const uint8_t diff = dest->count - dest->offset, total = count + diff;
+    struct route_node tmp[diff];
+    memcpy(tmp, dest->nodes + dest->offset, diff);
 
-    result->offset = result->count = 0;
-    int aindex = 0, bindex = 0, count = a->count + b->count;
-    while(count-- > 0)
+    uint8_t i, n, metrics[total][20], *ptrs[total], refmetric[20];
+    for(i = 0; i < 20; i++) refmetric[i] = srcid[i] ^ dstid[i];
+    for(n = 0; n < total; n++) for(i = 0; i < 20; i++)
     {
-        int res = (aindex == a->count) ? 1 : (bindex == b->count) ? -1 : memcmp(ametrics[aindex], bmetrics[bindex], 20);
-        if(res < 0)
-        {
-            memcpy(result->nodes[result->count].id, a->nodes[aindex].id, 20);
-            result->nodes[result->count].addr = a->nodes[aindex].addr;
-            result->nodes[result->count].port = a->nodes[aindex].port;
-            aindex++; result->count++;
-        }
-        else if(res > 0)
-        {
-            memcpy(result->nodes[result->count].id, b->nodes[bindex].id, 20);
-            result->nodes[result->count].addr = b->nodes[bindex].addr;
-            result->nodes[result->count].port = b->nodes[bindex].port;
-            bindex++; result->count++;
-        }
-        else aindex++;
+        const struct route_node *node = n < count ? &source[n] : &tmp[n - count];
+        metrics[n][i] = node->id[i] ^ dstid[i];
+        ptrs[n] = metrics[n];
+    }
+
+    dest->offset = dest->count = 0;
+    qsort(ptrs, total, sizeof(void*), compare);
+    for(n = 0; n < total; n++)
+    {
+        i = (ptrs[n] - metrics[0]) / 20;
+        if((i < count) && (memcmp(ptrs[n], refmetric, 20) >= 0)) continue;
+        const struct route_node *node = i < count ? &source[i] : &tmp[i - count];
+        if((n > 0) && (node->addr == dest->nodes[n - 1].addr) && (node->port == dest->nodes[n - 1].port)) continue;
+        memcpy(dest->nodes[n].id, node->id, 20);
+        dest->nodes[n].addr = node->addr;
+        dest->nodes[n].port = node->port;
+        if(++dest->count == 20) break;
     }
 }
