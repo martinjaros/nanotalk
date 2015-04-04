@@ -53,7 +53,8 @@ struct service
     FILE *cache;
     uint8_t srcid[20], dstid[20];
     struct route table[157], lookup;
-    struct sockaddr_in addr;
+    uint32_t addr;
+    uint16_t port;
 
     struct crypto *crypto;
     uint8_t keybuf[2048];
@@ -80,14 +81,15 @@ static void lookup_handler(struct service *sv)
     }
     if(memcmp(sv->lookup.nodes[sv->lookup.offset].id, sv->dstid, 20) == 0)
     {
-        sv->addr.sin_family = AF_INET;
-        sv->addr.sin_addr.s_addr = sv->lookup.nodes[sv->lookup.offset].addr;
-        sv->addr.sin_port = sv->lookup.nodes[sv->lookup.offset].port;
+        sv->addr = sv->lookup.nodes[sv->lookup.offset].addr;
+        sv->port = sv->lookup.nodes[sv->lookup.offset].port;
         sv->state = STATE_HANDSHAKE;
         sv->keybuf[0] = MESSAGE_KEY_REQ;
         sv->keylen = crypto_keyout(sv->crypto, sv->keybuf + 1, sizeof(sv->keybuf) - 1) + 1;
+
         INFO("Lookup done; sending keys, size = %d", sv->keylen);
-        int res = sendto(sv->sockfd, sv->keybuf, sv->keylen, 0, (struct sockaddr*)&sv->addr, sizeof(struct sockaddr_in)); assert(res > 0);
+        struct sockaddr_in addr = { AF_INET, sv->port, { sv->addr } };
+        int res = sendto(sv->sockfd, sv->keybuf, sv->keylen, 0, (struct sockaddr*)&addr, sizeof(addr)); assert(res > 0);
         struct itimerspec its = { { 3, 0 }, { 3, 0 } };
         res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);
         return;
@@ -140,10 +142,14 @@ static void socket_handler(struct service *sv)
         {
             if(sv->state != STATE_LOOKUP) { WARN("Bad state for route response (%d)", sv->state); return; }
             if(len < sizeof(struct msg_route)) { WARN("Route too short"); return; }
+            int i; for(i = 0; i < sv->lookup.offset; i++)
+                if((addr.sin_addr.s_addr == sv->lookup.nodes[i].addr) && (addr.sin_port == sv->lookup.nodes[i].port)) { i = 0; break; }
+            if(i) { WARN("Address mismatch"); return; }
+
             struct msg_route *msg = (struct msg_route*)buffer;
             if(memcmp(msg->dst, sv->dstid, 20) != 0) { WARN("Route ID mismatch"); return; }
             uint8_t count = (len - sizeof(struct msg_route)) / sizeof(struct route_node);
-            if(count) route_merge(msg->nodes, count < 20 ? count : 20, msg->src, msg->dst, &sv->lookup);
+            if(count) route_merge(msg->nodes, count < 20 ? count : 20, sv->dstid, &sv->lookup);
 
             struct itimerspec its = { { 1, 0 }, { 1, 0 } };
             int res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);
@@ -159,13 +165,14 @@ static void socket_handler(struct service *sv)
                 if(!crypto_keyin(sv->crypto, buffer + 1, len - 1, sv->dstid)) { WARN("Verification failed"); return; }
                 INFO("Ringing from %s:%hu", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
                 route_add(sv->table, sv->srcid, sv->dstid, addr.sin_addr.s_addr, addr.sin_port);
-                memcpy(&sv->addr, &addr, sizeof(addr));
+                sv->addr = addr.sin_addr.s_addr;
+                sv->port = addr.sin_port;
                 sv->state = STATE_RINGING;
                 sv->handler(sv->dstid);
             }
             else if(sv->state == STATE_ESTABLISHED)
             {
-                if(memcmp(&sv->addr, &addr, sizeof(addr)) != 0) { WARN("Address mismatch"); return; }
+                if((addr.sin_addr.s_addr != sv->addr) || (addr.sin_port != sv->port)) { WARN("Address mismatch"); return; }
                 INFO("Sending keys (response), size = %d", sv->keylen);
                 res = sendto(sv->sockfd, sv->keybuf, sv->keylen, 0, (struct sockaddr*)&addr, sizeof(addr)); assert(res > 0);
             }
@@ -177,7 +184,7 @@ static void socket_handler(struct service *sv)
         {
             uint8_t tmp[20];
             if(sv->state != STATE_HANDSHAKE) { WARN("Bad state for key response (%d)", sv->state); return; }
-            if(memcmp(&sv->addr, &addr, sizeof(addr)) != 0) { WARN("Address mismatch"); return; }
+            if((addr.sin_addr.s_addr != sv->addr) || (addr.sin_port != sv->port)) { WARN("Address mismatch"); return; }
             if(!crypto_keyin(sv->crypto, buffer + 1, len - 1, tmp)) { WARN("Verification failed"); return; }
             if(memcmp(tmp, sv->dstid, 20) != 0) { WARN("Peer ID mismatch"); return; }
             crypto_derive(sv->crypto);
@@ -194,7 +201,7 @@ static void socket_handler(struct service *sv)
         case MESSAGE_PAYLOAD:
         {
             if(sv->state != STATE_ESTABLISHED) { DEBUG("Bad state for payload (%d)", sv->state); return; }
-            if(memcmp(&sv->addr, &addr, sizeof(addr)) != 0) { WARN("Address mismatch"); return; }
+            if((addr.sin_addr.s_addr != sv->addr) || (addr.sin_port != sv->port)) { WARN("Address mismatch"); return; }
             if(len < sizeof(struct msg_payload)) { WARN("Payload too short"); return; }
             struct msg_payload *msg = (struct msg_payload*)buffer;
             uint32_t seqnum = ntohl(msg->seqnum);
@@ -217,7 +224,7 @@ static void socket_handler(struct service *sv)
         case MESSAGE_HANGUP:
         {
             if(sv->state < STATE_HANDSHAKE) { WARN("Bad state for hangup (%d)", sv->state); return; } // STATE_IDLE, STATE_LOOKUP
-            if(memcmp(&sv->addr, &addr, sizeof(addr)) != 0) { WARN("Address mismatch"); return; }
+            if((addr.sin_addr.s_addr != sv->addr) || (addr.sin_port != sv->port)) { WARN("Address mismatch"); return; }
             struct itimerspec its = { { 0, 0 }, { 0, 0 } };
             res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);
             if(sv->state == STATE_ESTABLISHED) media_stop(sv->media);
@@ -246,7 +253,8 @@ static void timer_handler(struct service *sv)
 
         case STATE_HANDSHAKE:
             DEBUG("Sending keys (timeout), size = %d", sv->keylen);
-            res = sendto(sv->sockfd, sv->keybuf, sv->keylen, 0, (struct sockaddr*)&sv->addr, sizeof(struct sockaddr_in)); assert(res > 0);
+            struct sockaddr_in addr = { AF_INET, sv->port, { sv->addr } };
+            res = sendto(sv->sockfd, sv->keybuf, sv->keylen, 0, (struct sockaddr*)&addr, sizeof(addr)); assert(res > 0);
             break;
 
         case STATE_ESTABLISHED:
@@ -260,7 +268,8 @@ static void timer_handler(struct service *sv)
             crypto_encipher(sv->crypto, sv->seqnum_capture++, msg->tag, buffer, msg->data, len);
 
             DEBUG("Sending payload, size = %d", sizeof(tmp));
-            res = sendto(sv->sockfd, tmp, sizeof(tmp), 0, (struct sockaddr*)&sv->addr, sizeof(struct sockaddr_in)); assert(res > 0);
+            struct sockaddr_in addr = { AF_INET, sv->port, { sv->addr } };
+            res = sendto(sv->sockfd, tmp, sizeof(tmp), 0, (struct sockaddr*)&addr, sizeof(addr)); assert(res > 0);
             break;
         }
 
@@ -286,8 +295,10 @@ void service_answer(struct service *sv)
     sv->state = STATE_ESTABLISHED;
     sv->keybuf[0] = MESSAGE_KEY_RES;
     sv->keylen = crypto_keyout(sv->crypto, sv->keybuf + 1, sizeof(sv->keybuf) - 1) + 1;
+
     INFO("Sending keys, size = %d", sv->keylen);
-    int res = sendto(sv->sockfd, sv->keybuf, sv->keylen, 0, (struct sockaddr*)&sv->addr, sizeof(struct sockaddr_in)); assert(res > 0);
+    struct sockaddr_in addr = { AF_INET, sv->port, { sv->addr } };
+    int res = sendto(sv->sockfd, sv->keybuf, sv->keylen, 0, (struct sockaddr*)&addr, sizeof(addr)); assert(res > 0);
     crypto_derive(sv->crypto);
 
     media_start(sv->media);
@@ -304,7 +315,8 @@ void service_hangup(struct service *sv)
     if(sv->state > STATE_LOOKUP) // STATE_HANDSHAKE, STATE_RINGING, STATE_ESTABLISHED
     {
         uint8_t msg = MESSAGE_HANGUP;
-        int res = sendto(sv->sockfd, &msg, 1, 0, (struct sockaddr*)&sv->addr, sizeof(struct sockaddr_in)); assert(res > 0);
+        struct sockaddr_in addr = { AF_INET, sv->port, { sv->addr } };
+        res = sendto(sv->sockfd, &msg, 1, 0, (struct sockaddr*)&addr, sizeof(addr)); assert(res > 0);
     }
     sv->state = STATE_IDLE; INFO("Disconnected");
 }

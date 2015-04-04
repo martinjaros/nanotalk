@@ -32,6 +32,6 @@ struct route
 void route_init(struct route table[157]);
 void route_add(struct route table[157], const uint8_t srcid[20], const uint8_t dstid[20], uint32_t addr, uint16_t port);
 void route_lookup(const struct route table[157], const uint8_t srcid[20], const uint8_t dstid[20], struct route *result);
-void route_merge(const struct route_node *source, uint8_t count, const uint8_t srcid[20], const uint8_t dstid[20], struct route *dest);
+void route_merge(const struct route_node *source, uint8_t count, const uint8_t dstid[20], struct route *dest);
 
 #endif /* ROUTE_H */

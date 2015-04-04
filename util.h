@@ -17,6 +17,11 @@
 
 #include <stdint.h>
 
+inline static void memxor(const uint8_t *a, const uint8_t *b, uint8_t *res, size_t n)
+{
+    int i; for(i = 0; i < n; i++) res[i] = a[i] ^ b[i];
+}
+
 inline static int str2hex(const char *str, uint8_t *hex, size_t n)
 {
     int i; for(i = 0; i < n; i++)
