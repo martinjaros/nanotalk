@@ -50,7 +50,6 @@ struct service
     enum { STATE_IDLE, STATE_LOOKUP, STATE_HANDSHAKE, STATE_RINGING, STATE_ESTABLISHED } state;
     int sockfd, timerfd;
 
-    FILE *cache;
     uint8_t srcid[20], dstid[20];
     struct route table[157], lookup;
     uint32_t addr;
@@ -278,6 +277,11 @@ static void timer_handler(struct service *sv)
     }
 }
 
+void service_add(struct service *sv, const uint8_t uid[20], uint32_t addr, uint16_t port)
+{
+    route_add(sv->table, sv->srcid, uid, addr, port);
+}
+
 void service_dial(struct service *sv, const uint8_t uid[20])
 {
     if(sv->state != STATE_IDLE) { WARN("Bad state to dial (%d)", sv->state); return; }
@@ -321,19 +325,7 @@ void service_hangup(struct service *sv)
     sv->state = STATE_IDLE; INFO("Disconnected");
 }
 
-void service_cache(struct service *sv)
-{
-    if(freopen(NULL, "w", sv->cache) == NULL) { ERROR("Cannot write to cache file"); abort(); }
-    int i, j, n = 0; for(i = 0; i < 157; i++) for(j = 0; j < sv->table[i].count; j++, n++)
-    {
-        char id[40]; hex2str(sv->table[i].nodes[j].id, id, 20);
-        struct in_addr addr = { sv->table[i].nodes[j].addr };
-        int res = fprintf(sv->cache, "%.40s %s:%hu\n", id, inet_ntoa(addr), ntohs(sv->table[i].nodes[j].port)); assert(res > 0);
-    }
-    fflush(sv->cache); INFO("Saved %d nodes", n);
-}
-
-void service_init(struct service *sv, struct event *ev, uint16_t port, const char *keyfile, const char *cachefile, void (*handler)(const uint8_t uid[20]))
+void service_init(struct service *sv, struct event *ev, uint16_t port, const char *key, void (*handler)(const uint8_t uid[20]))
 {
     sv->state = STATE_IDLE;
     sv->handler = handler;
@@ -349,19 +341,9 @@ void service_init(struct service *sv, struct event *ev, uint16_t port, const cha
 
     route_init(sv->table);
     sv->crypto = (struct crypto*)((void*)sv + sizeof(struct service));
-    crypto_init(sv->crypto, keyfile, sv->srcid);
+    crypto_init(sv->crypto, key, sv->srcid);
     sv->media = (struct media*)((void*)sv + sizeof(struct service) + crypto_sizeof());
     media_init(sv->media);
 
-    char tmp[128], n = 0;
-    sv->cache = fopen(cachefile, "r"); if(sv->cache == NULL) { ERROR("Cannot open `%s`", cachefile); abort(); }
-    while(fgets(tmp, sizeof(tmp), sv->cache))
-    {
-        uint8_t id[20]; char str_addr[16];
-        struct in_addr addr; uint16_t port;
-        if((strlen(tmp) > 40) && str2hex(tmp, id, 20) && (sscanf(tmp + 40, " %15[^:]:%hu", str_addr, &port) == 2) && inet_aton(str_addr, &addr))
-            { route_add(sv->table, sv->srcid, id, addr.s_addr, htons(port)); n++; }
-    }
-
-    hex2str(sv->srcid, tmp, 20); INFO("Loaded %d nodes; user ID is %.40s", n, tmp);
+    char tmp[128]; INFO("User ID is %.40s", hex2str(sv->srcid, tmp, 20));
 }

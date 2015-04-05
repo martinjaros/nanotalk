@@ -21,10 +21,10 @@
 struct service;
 
 size_t service_sizeof();
-void service_init(struct service *sv, struct event *ev, uint16_t port, const char *keyfile, const char *cachefile, void (*handler)(const uint8_t uid[20]));
+void service_init(struct service *sv, struct event *ev, uint16_t port, const char *key, void (*handler)(const uint8_t uid[20]));
+void service_add(struct service *sv, const uint8_t uid[20], uint32_t addr, uint16_t port);
 void service_dial(struct service *sv, const uint8_t uid[20]);
 void service_answer(struct service *sv);
 void service_hangup(struct service *sv);
-void service_cache(struct service *sv);
 
 #endif /* SERVICE_H */
