@@ -97,17 +97,14 @@ static void service_handler(const uint8_t uid[20], struct app *app)
 
 int main(int argc, char **argv)
 {
+    const char* version = PACKAGE_STRING "\nCopyright (C) 2015 - Martin Jaros <" PACKAGE_BUGREPORT ">\n" PACKAGE_URL;
     const char* help = "Usage: %s [OPTIONS]\n"
-        "   --help              Print this message\n"
-        "   --version           Print the version number\n"
+        "   --help              Print help\n"
+        "   --version           Print version\n"
         "   --port=NUM          Set port number, default 5004\n"
         "   --key=FILE          Set key file, default `/etc/ssl/private/dvs.key`\n"
         "   --socket=FILE       Set unix socket, default `/tmp/dvs`\n"
         "   --debug=NUM         Set trace verbosity (0 - none, 1 - error, 2 - warn, 3 - info, 4 - debug), default 3\n";
-
-    const char* version =
-        "Distributed voice service daemon " PACKAGE_VERSION "\n"
-        "Copyright (C) 2015 - Martin Jaros <xjaros32@stud.feec.vutbr.cz>";
 
     const struct option options[] =
     {
