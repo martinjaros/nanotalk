@@ -15,39 +15,11 @@
 #ifndef EVENT_H
 #define EVENT_H
 
-#define EVENT_NFDS 32
+struct event;
 
-#include <assert.h>
-#include <sys/epoll.h>
-
-struct event
-{
-    int epfd;
-    struct { void (*handler)(void *args); void *args; } handlers[EVENT_NFDS];
-};
-
-static inline void event_init(struct event *ev)
-{
-    ev->epfd = epoll_create1(0); assert(ev->epfd >= 0);
-}
-
-static inline void event_add(struct event *ev, int fd, void (*handler)(void *args), void *args)
-{
-    assert(fd < EVENT_NFDS);
-    struct epoll_event event = { .events = EPOLLIN, .data = { .fd = fd } };
-    int res = epoll_ctl(ev->epfd, handler ? EPOLL_CTL_ADD : EPOLL_CTL_DEL, fd, &event); assert(res == 0);
-    ev->handlers[fd].handler = handler;
-    ev->handlers[fd].args = args;
-}
-
-static inline void event_wait(struct event *ev, int timeout)
-{
-    struct epoll_event event;
-    if(epoll_wait(ev->epfd, &event, 1, timeout) == 1)
-    {
-        assert(ev->handlers[event.data.fd].handler);
-        ev->handlers[event.data.fd].handler(ev->handlers[event.data.fd].args);
-    }
-}
+size_t event_sizeof();
+void event_init(struct event *ev);
+void event_set(struct event *ev, int fd, void (*handler)(void *args), void *args);
+void event_wait(struct event *ev, int timeout);
 
 #endif /* EVENT_H */

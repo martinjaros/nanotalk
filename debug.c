@@ -47,5 +47,5 @@ void debug_printf(int level, const char *file, int line, const char *msg, ...)
     buffer[num + vnum] = '\n';
     va_end(args);
 
-    fwrite(buffer, 1, num + vnum + 1, stderr);
+    fwrite(buffer, 1, num + vnum + 1, stdout);
 }

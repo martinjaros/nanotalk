@@ -62,7 +62,8 @@ struct service
     struct media *media;
     uint32_t seqnum_capture, seqnum_playback;
 
-    void (*handler)(const uint8_t uid[20]);
+    void (*handler)(const uint8_t uid[20], void *args);
+    void *args;
 };
 
 size_t service_sizeof() { return sizeof(struct service) + crypto_sizeof() + media_sizeof(); }
@@ -73,7 +74,7 @@ static void lookup_handler(struct service *sv)
     {
         WARN("No route");
         sv->state = STATE_IDLE;
-        sv->handler(NULL);
+        sv->handler(NULL, sv->args);
         struct itimerspec its = { { 0, 0 }, { 0, 0 } };
         int res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);
         return;
@@ -167,7 +168,7 @@ static void socket_handler(struct service *sv)
                 sv->addr = addr.sin_addr.s_addr;
                 sv->port = addr.sin_port;
                 sv->state = STATE_RINGING;
-                sv->handler(sv->dstid);
+                sv->handler(sv->dstid, sv->args);
             }
             else if(sv->state == STATE_ESTABLISHED)
             {
@@ -229,7 +230,7 @@ static void socket_handler(struct service *sv)
             if(sv->state == STATE_ESTABLISHED) media_stop(sv->media);
             INFO("Disconnected by peer");
             sv->state = STATE_IDLE;
-            sv->handler(NULL);
+            sv->handler(NULL, sv->args);
             break;
         }
 
@@ -325,19 +326,20 @@ void service_hangup(struct service *sv)
     sv->state = STATE_IDLE; INFO("Disconnected");
 }
 
-void service_init(struct service *sv, struct event *ev, uint16_t port, const char *key, void (*handler)(const uint8_t uid[20]))
+void service_init(struct service *sv, struct event *ev, uint16_t port, const char *key, void (*handler)(const uint8_t uid[20], void *args), void *args)
 {
     sv->state = STATE_IDLE;
     sv->handler = handler;
+    sv->args = args;
     sv->timerfd = timerfd_create(CLOCK_MONOTONIC, 0); assert(sv->timerfd > 0);
-    event_add(ev, sv->timerfd, (void(*)(void*))timer_handler, sv);
+    event_set(ev, sv->timerfd, (void(*)(void*))timer_handler, sv);
 
     const int optval = 1;
     const struct sockaddr_in addr = { AF_INET, htons(port) };
     sv->sockfd = socket(AF_INET, SOCK_DGRAM, 0); assert(sv->sockfd > 0);
     int res = setsockopt(sv->sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)); assert(res == 0);
     if(bind(sv->sockfd, (struct sockaddr*)&addr, sizeof(addr)) != 0) { ERROR("Cannot bind socket"); abort(); }
-    event_add(ev, sv->sockfd, (void(*)(void*))socket_handler, sv);
+    event_set(ev, sv->sockfd, (void(*)(void*))socket_handler, sv);
 
     route_init(sv->table);
     sv->crypto = (struct crypto*)((void*)sv + sizeof(struct service));

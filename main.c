@@ -14,57 +14,93 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
+#include <assert.h>
 #include <string.h>
 #include <getopt.h>
+#include <sys/ioctl.h>
+#include <sys/un.h>
 #include <arpa/inet.h>
 
 #include "debug.h"
 #include "util.h"
 #include "service.h"
 
-static void input_handler(struct service *sv)
+struct app
 {
-    char buffer[128];
-    if(fgets(buffer, sizeof(buffer), stdin) == NULL) return;
-    if((strlen(buffer) > 44) && (memcmp(buffer, "ADD ", 4) == 0))
+    int listenfd, clientfd;
+    struct event *ev;
+    struct service *sv;
+};
+
+static void connection_handler(struct app *app);
+static void input_handler(struct app *app)
+{
+    size_t len = 0;
+    int res = ioctl(app->clientfd, FIONREAD, &len); assert(res == 0);
+    char buffer[len];
+
+    res = recv(app->clientfd, buffer, len, 0); assert(res == len);
+    if(len == 0)
+    {
+        INFO("Client disconnected");
+        close(app->clientfd); app->clientfd = -1;
+        event_set(app->ev, app->listenfd, (void(*)(void*))connection_handler, app);
+    }
+    else if((len > 44) && (memcmp(buffer, "ADD ", 4) == 0))
     {
         uint8_t uid[20]; char str_addr[16]; struct in_addr addr; uint16_t port;
-        if(str2hex(buffer + 4, uid, 20) && (sscanf(buffer + 44, " %15[^:]:%hu", str_addr, &port) == 2) && (inet_aton(str_addr, &addr)))
-            service_add(sv, uid, addr.s_addr, htons(port));
+        if(str2hex(buffer + 4, uid, 20) && (sscanf(buffer + 44, " %15[^:]:%hu\n", str_addr, &port) == 2) && (inet_aton(str_addr, &addr)))
+            service_add(app->sv, uid, addr.s_addr, htons(port));
         else WARN("Parse error");
     }
-    else if((strlen(buffer) == 46) && (memcmp(buffer, "DIAL ", 5) == 0))
+    else if((len >= 46) && (memcmp(buffer, "DIAL ", 5) == 0) && (buffer[45] == '\n'))
     {
         uint8_t uid[20];
-        if(str2hex(buffer + 5, uid, 20)) service_dial(sv, uid); else WARN("Hex parse error");
+        if(str2hex(buffer + 5, uid, 20)) service_dial(app->sv, uid); else WARN("Parse error");
     }
-    else if(strcmp(buffer, "ANSWER\n") == 0) service_answer(sv);
-    else if(strcmp(buffer, "HANGUP\n") == 0) service_hangup(sv);
+    else if((len >= 7) && (memcmp(buffer, "ANSWER\n", 7) == 0)) service_answer(app->sv);
+    else if((len >= 7) && (memcmp(buffer, "HANGUP\n", 7) == 0)) service_hangup(app->sv);
     else INFO("Unknown input");
 }
 
-static void service_handler(const uint8_t uid[20])
+static void connection_handler(struct app *app)
+{
+    app->clientfd = accept(app->listenfd, NULL, NULL); assert(app->clientfd > 0);
+    event_set(app->ev, app->clientfd, (void(*)(void*))input_handler, app);
+    event_set(app->ev, app->listenfd, NULL, NULL);
+    INFO("Client connected");
+}
+
+static void service_handler(const uint8_t uid[20], struct app *app)
 {
     if(uid)
     {
-        char buffer[46] = "RING ";
+        if(app->clientfd == -1) { service_hangup(app->sv); return; }
+        char buffer[46] = "RING "; buffer[45] = '\n';
         hex2str(uid, buffer + 5, 20);
-        puts(buffer);
+        int res = send(app->clientfd, buffer, sizeof(buffer), 0); assert(res > 0);
     }
-    else puts("HANGUP");
+    else
+    {
+        if(app->clientfd == -1) return;
+        const char buffer[] = "HANGUP\n";
+        int res = send(app->clientfd, buffer, sizeof(buffer), 0); assert(res > 0);
+    }
 }
 
 int main(int argc, char **argv)
 {
-    const char* help = "Usage: dvsd [OPTIONS]\n"
+    const char* help = "Usage: %s [OPTIONS]\n"
         "   --help              Print this message\n"
         "   --version           Print the version number\n"
         "   --port=NUM          Set port number, default 5004\n"
         "   --key=FILE          Set key file, default `/etc/ssl/private/dvs.key`\n"
+        "   --socket=FILE       Set unix socket, default `/tmp/dvs`\n"
         "   --debug=NUM         Set trace verbosity (0 - none, 1 - error, 2 - warn, 3 - info, 4 - debug), default 3\n";
 
     const char* version =
-        "Distributed VoIP service daemon " PACKAGE_VERSION "\n"
+        "Distributed voice service daemon " PACKAGE_VERSION "\n"
         "Copyright (C) 2015 - Martin Jaros <xjaros32@stud.feec.vutbr.cz>";
 
     const struct option options[] =
@@ -73,30 +109,39 @@ int main(int argc, char **argv)
         { "version",   no_argument,       NULL, 0 },
         { "port",      required_argument, NULL, 0 },
         { "key",       required_argument, NULL, 0 },
+        { "socket",    required_argument, NULL, 0 },
         { "debug",     required_argument, NULL, 0 },
         { NULL,        0,                 NULL, 0 }
     };
 
+    struct sockaddr_un sockaddr = { AF_UNIX, "/tmp/dvs" };
     char *key = "/etc/ssl/private/dvs.key";
     int index = 0, debug = 3, port = 5004;
     while(getopt_long(argc, argv, "", options, &index) == 0)
     {
         switch (index)
         {
-            case 0: puts(help); return 0;
+            case 0: printf(help, *argv); return 0;
             case 1: puts(version); return 0;
             case 2: port = atol(optarg); break;
             case 3: key = optarg; break;
-            case 4: debug = atol(optarg); break;
+            case 4: strcpy(sockaddr.sun_path, optarg); break;
+            case 5: debug = atol(optarg); break;
         }
     }
 
     debug_setlevel(debug);
-    INFO("Initializing: port = %d, key = %s", port, key);
+    INFO("Initializing: port = %d, key = %s, socket = %s", port, key, sockaddr.sun_path);
 
-    struct event ev; event_init(&ev);
-    char container[service_sizeof()]; struct service *sv = (struct service*)container;
-    service_init(sv, &ev, port, key, service_handler);
-    event_add(&ev, 0, (void(*)(void*))input_handler, sv);
-    while(1) event_wait(&ev, -1);
+    char ev_cont[event_sizeof()], sv_cont[service_sizeof()];
+    struct app app = { socket(AF_UNIX, SOCK_STREAM, 0), -1, (struct event*)ev_cont, (struct service*)sv_cont }; assert(app.listenfd > 0);
+
+    unlink(sockaddr.sun_path);
+    if(bind(app.listenfd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) { ERROR("Cannot bind unix socket"); abort(); }
+    int res = listen(app.listenfd, 1); assert(res == 0);
+
+    event_init(app.ev);
+    service_init(app.sv, app.ev, port, key, (void(*)(const uint8_t*, void*))service_handler, &app);
+    event_set(app.ev, app.listenfd, (void(*)(void*))connection_handler, &app);
+    while(1) event_wait(app.ev, -1);
 }
