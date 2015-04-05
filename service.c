@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/epoll.h>
 #include <sys/timerfd.h>
 #include <arpa/inet.h>
 
@@ -48,7 +49,7 @@ __attribute__((packed));
 struct service
 {
     enum { STATE_IDLE, STATE_LOOKUP, STATE_HANDSHAKE, STATE_RINGING, STATE_ESTABLISHED } state;
-    int sockfd, timerfd;
+    int epfd, sockfd, timerfd;
 
     uint8_t srcid[20], dstid[20];
     struct route table[157], lookup;
@@ -62,8 +63,10 @@ struct service
     struct media *media;
     uint32_t seqnum_capture, seqnum_playback;
 
-    void (*handler)(const uint8_t uid[20], void *args);
-    void *args;
+    #define NFDS 32
+    struct { void (*handler)(void *args); void *args; } fd_handlers[NFDS];
+    void (*state_handler)(const uint8_t uid[20], void *args);
+    void *state_args;
 };
 
 size_t service_sizeof() { return sizeof(struct service) + crypto_sizeof() + media_sizeof(); }
@@ -74,7 +77,7 @@ static void lookup_handler(struct service *sv)
     {
         WARN("No route");
         sv->state = STATE_IDLE;
-        sv->handler(NULL, sv->args);
+        sv->state_handler(NULL, sv->state_args);
         struct itimerspec its = { { 0, 0 }, { 0, 0 } };
         int res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);
         return;
@@ -168,7 +171,7 @@ static void socket_handler(struct service *sv)
                 sv->addr = addr.sin_addr.s_addr;
                 sv->port = addr.sin_port;
                 sv->state = STATE_RINGING;
-                sv->handler(sv->dstid, sv->args);
+                sv->state_handler(sv->dstid, sv->state_args);
             }
             else if(sv->state == STATE_ESTABLISHED)
             {
@@ -230,7 +233,7 @@ static void socket_handler(struct service *sv)
             if(sv->state == STATE_ESTABLISHED) media_stop(sv->media);
             INFO("Disconnected by peer");
             sv->state = STATE_IDLE;
-            sv->handler(NULL, sv->args);
+            sv->state_handler(NULL, sv->state_args);
             break;
         }
 
@@ -326,20 +329,36 @@ void service_hangup(struct service *sv)
     sv->state = STATE_IDLE; INFO("Disconnected");
 }
 
-void service_init(struct service *sv, struct event *ev, uint16_t port, const char *key, void (*handler)(const uint8_t uid[20], void *args), void *args)
+void service_pollfd(struct service *sv, int fd, void (*handler)(void *args), void *args)
+{
+    struct epoll_event event = { .events = EPOLLIN, .data = { .fd = fd } }; assert(fd < NFDS);
+    int res = epoll_ctl(sv->epfd, handler ? EPOLL_CTL_ADD : EPOLL_CTL_DEL, fd, &event); assert(res == 0);
+    sv->fd_handlers[fd].handler = handler;
+    sv->fd_handlers[fd].args = args;
+}
+
+void service_wait(struct service *sv, int timeout)
+{
+    struct epoll_event event;
+    if(epoll_wait(sv->epfd, &event, 1, timeout) == 1)
+        sv->fd_handlers[event.data.fd].handler(sv->fd_handlers[event.data.fd].args);
+}
+
+void service_init(struct service *sv, uint16_t port, const char *key, void (*handler)(const uint8_t uid[20], void *args), void *args)
 {
     sv->state = STATE_IDLE;
-    sv->handler = handler;
-    sv->args = args;
+    sv->state_handler = handler;
+    sv->state_args = args;
+    sv->epfd = epoll_create1(0); assert(sv->epfd > 0);
     sv->timerfd = timerfd_create(CLOCK_MONOTONIC, 0); assert(sv->timerfd > 0);
-    event_set(ev, sv->timerfd, (void(*)(void*))timer_handler, sv);
+    service_pollfd(sv, sv->timerfd, (void(*)(void*))timer_handler, sv);
 
     const int optval = 1;
     const struct sockaddr_in addr = { AF_INET, htons(port) };
     sv->sockfd = socket(AF_INET, SOCK_DGRAM, 0); assert(sv->sockfd > 0);
     int res = setsockopt(sv->sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)); assert(res == 0);
     if(bind(sv->sockfd, (struct sockaddr*)&addr, sizeof(addr)) != 0) { ERROR("Cannot bind socket"); abort(); }
-    event_set(ev, sv->sockfd, (void(*)(void*))socket_handler, sv);
+    service_pollfd(sv, sv->sockfd, (void(*)(void*))socket_handler, sv);
 
     route_init(sv->table);
     sv->crypto = (struct crypto*)((void*)sv + sizeof(struct service));
@@ -347,5 +366,5 @@ void service_init(struct service *sv, struct event *ev, uint16_t port, const cha
     sv->media = (struct media*)((void*)sv + sizeof(struct service) + crypto_sizeof());
     media_init(sv->media);
 
-    char tmp[128]; INFO("User ID is %.40s", hex2str(sv->srcid, tmp, 20));
+    char tmp[128]; INFO("User ID is %.40s", hexify(sv->srcid, tmp, 20));
 }

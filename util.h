@@ -19,7 +19,7 @@
 #include <stdint.h>
 
 void* memxor(const void *__restrict s1, const void *__restrict s2, void *dest, size_t n);
-int str2hex(const char *str, uint8_t *hex, size_t n);
-char* hex2str(const uint8_t *hex, char *str, size_t n);
+char* hexify(const void *src, char *dest, size_t n);
+int unhexify(const char *src, void *dest, size_t n);
 
 #endif /* UTIL_H */

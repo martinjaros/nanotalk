@@ -29,7 +29,6 @@
 struct app
 {
     int listenfd, clientfd;
-    struct event *ev;
     struct service *sv;
 };
 
@@ -38,37 +37,44 @@ static void input_handler(struct app *app)
 {
     size_t len = 0;
     int res = ioctl(app->clientfd, FIONREAD, &len); assert(res == 0);
-    char buffer[len];
+    char buffer[len], *ptr;
 
     res = recv(app->clientfd, buffer, len, 0); assert(res == len);
     if(len == 0)
     {
         INFO("Client disconnected");
         close(app->clientfd); app->clientfd = -1;
-        event_set(app->ev, app->listenfd, (void(*)(void*))connection_handler, app);
+        service_pollfd(app->sv, app->listenfd, (void(*)(void*))connection_handler, app);
+        return;
     }
-    else if((len > 44) && (memcmp(buffer, "ADD ", 4) == 0))
+
+    ptr = strtok(buffer, "\n");
+    while(ptr)
     {
-        uint8_t uid[20]; char str_addr[16]; struct in_addr addr; uint16_t port;
-        if(str2hex(buffer + 4, uid, 20) && (sscanf(buffer + 44, " %15[^:]:%hu\n", str_addr, &port) == 2) && (inet_aton(str_addr, &addr)))
-            service_add(app->sv, uid, addr.s_addr, htons(port));
-        else WARN("Parse error");
+        len = strlen(ptr); DEBUG("Got input: %s", ptr);
+        if((len > 44) && (memcmp(ptr, "ADD ", 4) == 0))
+        {
+            uint8_t uid[20]; char c, str_addr[16]; struct in_addr addr; uint16_t port;
+            if(unhexify(ptr + 4, uid, 20) && (sscanf(ptr + 44, " %15[^:]:%hu%c", str_addr, &port, &c) == 2) && (inet_aton(str_addr, &addr)))
+            { INFO("Adding %s", ptr + 4); service_add(app->sv, uid, addr.s_addr, htons(port)); } else WARN("Parse error");
+        }
+        else if((len == 45) && (memcmp(ptr, "DIAL ", 5) == 0))
+        {
+            uint8_t uid[20];
+            if(unhexify(ptr + 5, uid, 20)) { INFO("Dialing %s", ptr + 5); service_dial(app->sv, uid); } else WARN("Parse error");
+        }
+        else if((len == 6) && (memcmp(ptr, "ANSWER", 6) == 0)) { INFO("Answering"); service_answer(app->sv); }
+        else if((len == 6) && (memcmp(ptr, "HANGUP", 6) == 0)) { INFO("Hangup"); service_hangup(app->sv); }
+        else INFO("Unknown input");
+        ptr = strtok(NULL, "\n");
     }
-    else if((len >= 46) && (memcmp(buffer, "DIAL ", 5) == 0) && (buffer[45] == '\n'))
-    {
-        uint8_t uid[20];
-        if(str2hex(buffer + 5, uid, 20)) service_dial(app->sv, uid); else WARN("Parse error");
-    }
-    else if((len >= 7) && (memcmp(buffer, "ANSWER\n", 7) == 0)) service_answer(app->sv);
-    else if((len >= 7) && (memcmp(buffer, "HANGUP\n", 7) == 0)) service_hangup(app->sv);
-    else INFO("Unknown input");
 }
 
 static void connection_handler(struct app *app)
 {
     app->clientfd = accept(app->listenfd, NULL, NULL); assert(app->clientfd > 0);
-    event_set(app->ev, app->clientfd, (void(*)(void*))input_handler, app);
-    event_set(app->ev, app->listenfd, NULL, NULL);
+    service_pollfd(app->sv, app->clientfd, (void(*)(void*))input_handler, app);
+    service_pollfd(app->sv, app->listenfd, NULL, NULL);
     INFO("Client connected");
 }
 
@@ -76,14 +82,14 @@ static void service_handler(const uint8_t uid[20], struct app *app)
 {
     if(uid)
     {
-        if(app->clientfd == -1) { service_hangup(app->sv); return; }
+        if(app->clientfd == -1) { WARN("No client"); service_hangup(app->sv); return; }
         char buffer[46] = "RING "; buffer[45] = '\n';
-        hex2str(uid, buffer + 5, 20);
+        hexify(uid, buffer + 5, 20);
         int res = send(app->clientfd, buffer, sizeof(buffer), 0); assert(res > 0);
     }
     else
     {
-        if(app->clientfd == -1) return;
+        if(app->clientfd == -1) { WARN("No client"); return; }
         const char buffer[] = "HANGUP\n";
         int res = send(app->clientfd, buffer, sizeof(buffer), 0); assert(res > 0);
     }
@@ -133,15 +139,14 @@ int main(int argc, char **argv)
     debug_setlevel(debug);
     INFO("Initializing: port = %d, key = %s, socket = %s", port, key, sockaddr.sun_path);
 
-    char ev_cont[event_sizeof()], sv_cont[service_sizeof()];
-    struct app app = { socket(AF_UNIX, SOCK_STREAM, 0), -1, (struct event*)ev_cont, (struct service*)sv_cont }; assert(app.listenfd > 0);
+    char container[service_sizeof()];
+    struct app app = { socket(AF_UNIX, SOCK_STREAM, 0), -1, (struct service*)container }; assert(app.listenfd > 0);
 
     unlink(sockaddr.sun_path);
     if(bind(app.listenfd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) { ERROR("Cannot bind unix socket"); abort(); }
     int res = listen(app.listenfd, 1); assert(res == 0);
 
-    event_init(app.ev);
-    service_init(app.sv, app.ev, port, key, (void(*)(const uint8_t*, void*))service_handler, &app);
-    event_set(app.ev, app.listenfd, (void(*)(void*))connection_handler, &app);
-    while(1) event_wait(app.ev, -1);
+    service_init(app.sv, port, key, (void(*)(const uint8_t*, void*))service_handler, &app);
+    service_pollfd(app.sv, app.listenfd, (void(*)(void*))connection_handler, &app);
+    while(1) service_wait(app.sv, -1);
 }

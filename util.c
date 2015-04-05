@@ -21,25 +21,27 @@ void* memxor(const void *__restrict s1, const void *__restrict s2, void *dest, s
     return dest;
 }
 
-int str2hex(const char *str, uint8_t *hex, size_t n)
+char* hexify(const void *src, char *dest, size_t n)
 {
-    int i; for(i = 0; i < n; i++)
-    {
-        char ch = str[i * 2], cl = str[i * 2 + 1];
-        if((cl >= '0') && (cl <= '9')) cl -= '0'; else if((cl >='A') && (cl <= 'F')) cl += 10 - 'A'; else return 0;
-        if((ch >= '0') && (ch <= '9')) ch -= '0'; else if((ch >='A') && (ch <= 'F')) ch += 10 - 'A'; else return 0;
-        hex[i] = (ch << 4) + cl;
-    }
-    return 1;
-}
-
-char* hex2str(const uint8_t *hex, char *str, size_t n)
-{
+    const uint8_t *u8src = src;
     const char map[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
     int i; for(i = 0; i < n; i++)
     {
-        str[i * 2] = map[hex[i] >> 4];
-        str[i * 2 + 1] = map[hex[i] & 0xF];
+        dest[i * 2] = map[u8src[i] >> 4];
+        dest[i * 2 + 1] = map[u8src[i] & 0xF];
     }
-    return str;
+    return dest;
+}
+
+int unhexify(const char *src, void *dest, size_t n)
+{
+    uint8_t *u8dest = dest;
+    int i; for(i = 0; i < n; i++)
+    {
+        char ch = src[i * 2], cl = src[i * 2 + 1];
+        if((cl >= '0') && (cl <= '9')) cl -= '0'; else if((cl >='A') && (cl <= 'F')) cl += 10 - 'A'; else return 0;
+        if((ch >= '0') && (ch <= '9')) ch -= '0'; else if((ch >='A') && (ch <= 'F')) ch += 10 - 'A'; else return 0;
+        u8dest[i] = (ch << 4) + cl;
+    }
+    return 1;
 }

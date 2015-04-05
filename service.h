@@ -16,12 +16,14 @@
 #define SERVICE_H
 
 #include <stdint.h>
-#include "event.h"
 
 struct service;
 
 size_t service_sizeof();
-void service_init(struct service *sv, struct event *ev, uint16_t port, const char *key, void (*handler)(const uint8_t uid[20], void *args), void *args);
+void service_init(struct service *sv, uint16_t port, const char *key, void (*handler)(const uint8_t uid[20], void *args), void *args);
+void service_pollfd(struct service *sv, int fd, void (*handler)(void *args), void *args);
+void service_wait(struct service *sv, int timeout);
+
 void service_add(struct service *sv, const uint8_t uid[20], uint32_t addr, uint16_t port);
 void service_dial(struct service *sv, const uint8_t uid[20]);
 void service_answer(struct service *sv);
