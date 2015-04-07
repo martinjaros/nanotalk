@@ -37,7 +37,7 @@ static void input_handler(struct app *app)
 {
     size_t len = 0;
     int res = ioctl(app->clientfd, FIONREAD, &len); assert(res == 0);
-    char buffer[len], *ptr;
+    char buffer[len + 1], *ptr; buffer[len] = 0;
 
     res = recv(app->clientfd, buffer, len, 0); assert(res == len);
     if(len == 0)

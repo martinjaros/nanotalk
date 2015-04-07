@@ -125,6 +125,7 @@ static void socket_handler(struct service *sv)
     {
         case MESSAGE_ROUTE_REQ:
         {
+            if(len < sizeof(struct msg_route)) { WARN("Route request too short"); return; }
             struct msg_route *request = (struct msg_route*)buffer;
             route_add(sv->table, sv->srcid, request->src, addr.sin_addr.s_addr, addr.sin_port);
             char tmp[sizeof(struct msg_route) + sizeof(struct route)];
@@ -144,13 +145,14 @@ static void socket_handler(struct service *sv)
         case MESSAGE_ROUTE_RES:
         {
             if(sv->state != STATE_LOOKUP) { WARN("Bad state for route response (%d)", sv->state); return; }
-            if(len < sizeof(struct msg_route)) { WARN("Route too short"); return; }
+            if(len < sizeof(struct msg_route)) { WARN("Route response too short"); return; }
             int i; for(i = 0; i < sv->lookup.offset; i++)
                 if((addr.sin_addr.s_addr == sv->lookup.nodes[i].addr) && (addr.sin_port == sv->lookup.nodes[i].port)) { i = 0; break; }
             if(i) { WARN("Address mismatch"); return; }
 
             struct msg_route *msg = (struct msg_route*)buffer;
             if(memcmp(msg->dst, sv->dstid, 20) != 0) { WARN("Route ID mismatch"); return; }
+            route_add(sv->table, sv->srcid, msg->src, addr.sin_addr.s_addr, addr.sin_port);
             uint8_t count = (len - sizeof(struct msg_route)) / sizeof(struct route_node);
             if(count) route_merge(msg->nodes, count < 20 ? count : 20, sv->dstid, &sv->lookup);
 
