@@ -23,8 +23,10 @@ Following options are supported:
     --version  Print version
     --port     Set port number, default 5004
     --key      Set key file, default `/etc/ssl/private/dvs.key`
-    --socket   Set unix socket, default `/tmp/dvs`
-    --debug    Set trace verbosity, default 3
+    --socket   Set UNIX socket, default `/tmp/dvs`
+    --capture  Set ALSA capture device
+    --playback Set ALSA playback device
+    --debug    Set trace verbosity
 
 If building from git, use `autoreconf -i` to generate the configure script.
 

@@ -18,7 +18,7 @@
 struct media;
 
 size_t media_sizeof();
-void media_init(struct media *media);
+void media_init(struct media *media, const char *capture, const char *playback);
 
 void media_start(struct media *media);
 void media_stop(struct media *media);

@@ -344,7 +344,8 @@ void service_wait(struct service *sv, int timeout)
         sv->fd_handlers[event.data.fd].handler(sv->fd_handlers[event.data.fd].args);
 }
 
-void service_init(struct service *sv, uint16_t port, const char *key, void (*handler)(const uint8_t uid[20], void *args), void *args)
+void service_init(struct service *sv, uint16_t port, const char *key, const char *capture, const char *playback,
+        void (*handler)(const uint8_t uid[20], void *args), void *args)
 {
     sv->state = STATE_IDLE;
     sv->state_handler = handler;
@@ -364,7 +365,7 @@ void service_init(struct service *sv, uint16_t port, const char *key, void (*han
     sv->crypto = (struct crypto*)((void*)sv + sizeof(struct service));
     crypto_init(sv->crypto, key, sv->srcid);
     sv->media = (struct media*)((void*)sv + sizeof(struct service) + crypto_sizeof());
-    media_init(sv->media);
+    media_init(sv->media, capture, playback);
 
     char tmp[128]; INFO("User ID is %.40s", hexify(sv->srcid, tmp, 20));
 }

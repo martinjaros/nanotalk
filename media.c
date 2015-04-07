@@ -21,9 +21,6 @@
 #include "debug.h"
 #include "media.h"
 
-#define DEVICE_CAPTURE  "default"
-#define DEVICE_PLAYBACK "default"
-
 struct media
 {
     int timerfd;
@@ -34,13 +31,13 @@ struct media
 
 size_t media_sizeof() { return sizeof(struct media) + opus_encoder_get_size(1) + opus_decoder_get_size(2); }
 
-void media_init(struct media *media)
+void media_init(struct media *media, const char *capture, const char *playback)
 {
-    if(snd_pcm_open(&media->playback, DEVICE_PLAYBACK, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) ||
+    if(snd_pcm_open(&media->playback, capture, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) ||
        snd_pcm_set_params(media->playback, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 2, 48000, 1, 40000))
     { ERROR("Cannot open playback device"); abort(); }
 
-    if(snd_pcm_open(&media->capture, DEVICE_CAPTURE, SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK) ||
+    if(snd_pcm_open(&media->capture, playback, SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK) ||
        snd_pcm_set_params(media->capture, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 1, 48000, 1, 40000))
     { ERROR("Cannot open capture device"); abort(); }
 

@@ -65,7 +65,7 @@ static void input_handler(struct app *app)
         }
         else if((len == 6) && (memcmp(ptr, "ANSWER", 6) == 0)) { INFO("Answering"); service_answer(app->sv); }
         else if((len == 6) && (memcmp(ptr, "HANGUP", 6) == 0)) { INFO("Hangup"); service_hangup(app->sv); }
-        else INFO("Unknown input");
+        else INFO("Unknown input: %s", ptr);
         ptr = strtok(NULL, "\n");
     }
 }
@@ -104,6 +104,8 @@ int main(int argc, char **argv)
         "   --port=NUM          Set port number, default 5004\n"
         "   --key=FILE          Set key file, default `/etc/ssl/private/dvs.key`\n"
         "   --socket=FILE       Set unix socket, default `/tmp/dvs`\n"
+        "   --capture=DEV       Set ALSA capture device\n"
+        "   --playback=DEV      Set ALSA playback device\n"
         "   --debug=NUM         Set trace verbosity (0 - none, 1 - error, 2 - warn, 3 - info, 4 - debug), default 3\n";
 
     const struct option options[] =
@@ -113,12 +115,14 @@ int main(int argc, char **argv)
         { "port",      required_argument, NULL, 0 },
         { "key",       required_argument, NULL, 0 },
         { "socket",    required_argument, NULL, 0 },
+        { "capture",   required_argument, NULL, 0 },
+        { "playback",  required_argument, NULL, 0 },
         { "debug",     required_argument, NULL, 0 },
         { NULL,        0,                 NULL, 0 }
     };
 
     struct sockaddr_un sockaddr = { AF_UNIX, "/tmp/dvs" };
-    char *key = "/etc/ssl/private/dvs.key";
+    char *key = "/etc/ssl/private/dvs.key", *capture = "default", *playback = "default";
     int index = 0, debug = 3, port = 5004;
     while(getopt_long(argc, argv, "", options, &index) == 0)
     {
@@ -129,7 +133,9 @@ int main(int argc, char **argv)
             case 2: port = atol(optarg); break;
             case 3: key = optarg; break;
             case 4: strcpy(sockaddr.sun_path, optarg); break;
-            case 5: debug = atol(optarg); break;
+            case 5: capture = optarg; break;
+            case 6: playback = optarg; break;
+            case 7: debug = atol(optarg); break;
         }
     }
 
@@ -143,7 +149,7 @@ int main(int argc, char **argv)
     if(bind(app.listenfd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) { ERROR("Cannot bind unix socket"); abort(); }
     int res = listen(app.listenfd, 1); assert(res == 0);
 
-    service_init(app.sv, port, key, (void(*)(const uint8_t*, void*))service_handler, &app);
+    service_init(app.sv, port, key, capture, playback, (void(*)(const uint8_t*, void*))service_handler, &app);
     service_pollfd(app.sv, app.listenfd, (void(*)(void*))connection_handler, &app);
     while(1) service_wait(app.sv, -1);
 }
