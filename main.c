@@ -39,14 +39,16 @@ static void input_handler(struct app *app)
     int res = ioctl(app->clientfd, FIONREAD, &len); assert(res == 0);
     char buffer[len + 1], *ptr; buffer[len] = 0;
 
-    res = recv(app->clientfd, buffer, len, 0); assert(res == len);
-    if(len == 0)
+    res = recv(app->clientfd, buffer, len, 0);
+    if(res <= 0)
     {
         INFO("Client disconnected");
         close(app->clientfd); app->clientfd = -1;
         service_pollfd(app->sv, app->listenfd, (void(*)(void*))connection_handler, app);
+        service_hangup(app->sv);
         return;
     }
+    assert(res == len);
 
     ptr = strtok(buffer, "\n");
     while(ptr)
