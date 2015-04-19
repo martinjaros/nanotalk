@@ -5,15 +5,20 @@
 # Config file `contacts`, format is "<ID> <NAME>\n" per contact.
 #
 
-import socket, gobject, gtk
+import sys, time, subprocess, socket, gobject, gtk
+
+# Usage: ./client.py [PORT]
+port = sys.argv[1] if len(sys.argv) > 1 else '5004'
+proc = subprocess.Popen(('dvsd', '--port=' + port, '--socket=/tmp/dvs-' + port))
+time.sleep(.1)
 
 class Application:
-    def __init__(self):
+    def __init__(self, port):
         self.dialog = None
 
         # Socket
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.connect('/tmp/dvs')
+        self.sock.connect('/tmp/dvs-%s' % port)
         with open('routes') as f: self.sock.send(''.join('ADD %s\n' % s for s in f.read().splitlines()))
         gobject.io_add_watch(self.sock, gobject.IO_IN, self.receive)
 
@@ -85,6 +90,8 @@ class Application:
     def rbclick(self, tray, button, time):
         self.rbmenu.popup(None, None, gtk.status_icon_position_menu, button, time, tray)
 
-Application()
-gtk.main()
-
+try:
+    Application(port)
+    gtk.main()
+finally:
+    proc.kill()
