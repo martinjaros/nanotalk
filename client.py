@@ -7,18 +7,19 @@
 
 import sys, time, subprocess, socket, gobject, gtk
 
-# Usage: ./client.py [PORT]
-port = sys.argv[1] if len(sys.argv) > 1 else '5004'
-proc = subprocess.Popen(('dvsd', '--port=' + port, '--socket=/tmp/dvs-' + port))
+sockpath = '/tmp/dvs'
+for arg in sys.argv:
+    if '--socket' in arg: sockpath = arg.split('=')[1]
+proc = subprocess.Popen(['dvsd'] + sys.argv[1:])
 time.sleep(.1)
 
 class Application:
-    def __init__(self, port):
+    def __init__(self, sockpath):
         self.dialog = None
 
         # Socket
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.connect('/tmp/dvs-%s' % port)
+        self.sock.connect(sockpath)
         with open('routes') as f: self.sock.send(''.join('ADD %s\n' % s for s in f.read().splitlines()))
         gobject.io_add_watch(self.sock, gobject.IO_IN, self.receive)
 
@@ -37,7 +38,7 @@ class Application:
         # Right click menu
         self.rbmenu = gtk.Menu()
         item = gtk.ImageMenuItem(gtk.STOCK_QUIT)
-        item.connect('activate', lambda *args: gtk.mainquit())
+        item.connect('activate', self.quit)
         self.rbmenu.append(item)
         self.rbmenu.show_all()
 
@@ -90,8 +91,13 @@ class Application:
     def rbclick(self, tray, button, time):
         self.rbmenu.popup(None, None, gtk.status_icon_position_menu, button, time, tray)
 
+    def quit(self, item):
+        self.sock.close()
+        gtk.mainquit()
+
 try:
-    Application(port)
+    Application(sockpath)
     gtk.main()
+    time.sleep(.1)
 finally:
     proc.kill()

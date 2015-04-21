@@ -319,7 +319,7 @@ void service_answer(struct service *sv)
 
 void service_hangup(struct service *sv)
 {
-    if(sv->state == STATE_IDLE) { INFO("Hangup while idle"); return; }
+    if(sv->state == STATE_IDLE) { DEBUG("Hangup while idle"); return; }
     struct itimerspec its = { { 0, 0 }, { 0, 0 } };
     int res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);
     if(sv->state > STATE_LOOKUP) // STATE_HANDSHAKE, STATE_RINGING, STATE_ESTABLISHED
