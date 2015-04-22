@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 #
 # This is a simple systray applet for the dvs daemon.
 # Config file `routes`, format is "<ID> <IP>:<PORT>\n" per route.
@@ -6,12 +6,6 @@
 #
 
 import sys, time, subprocess, socket, gobject, gtk
-
-sockpath = '/tmp/dvs'
-for arg in sys.argv:
-    if '--socket' in arg: sockpath = arg.split('=')[1]
-proc = subprocess.Popen(['dvsd'] + sys.argv[1:])
-time.sleep(.1)
 
 class Application:
     def __init__(self, sockpath):
@@ -95,9 +89,14 @@ class Application:
         self.sock.close()
         gtk.mainquit()
 
-try:
-    Application(sockpath)
-    gtk.main()
+
+if __name__ == "__main__":
+    proc = subprocess.Popen(['dvsd'] + sys.argv[1:])
     time.sleep(.1)
-finally:
-    proc.kill()
+    try:
+        Application(next((arg.split('=')[1] for arg in sys.argv if '--socket=' in arg), '/tmp/dvs'))
+        gtk.main()
+        time.sleep(.1)
+    finally:
+        proc.kill()
+
