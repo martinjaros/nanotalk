@@ -20,7 +20,7 @@
 #define INFO(msg, ...)  debug_printf(3, __FILE__, __LINE__, msg, ##__VA_ARGS__)
 #define DEBUG(msg, ...) debug_printf(4, __FILE__, __LINE__, msg, ##__VA_ARGS__)
 
-void debug_setlevel(int level);
-void debug_printf(int level, const char *file, int line, const char *msg, ...);
+void debug_setlevel(unsigned int level);
+void debug_printf(unsigned int level, const char *file, unsigned int line, const char *msg, ...);
 
 #endif /* DEBUG_H */

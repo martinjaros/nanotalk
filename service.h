@@ -18,10 +18,11 @@
 #include <stdint.h>
 
 struct service;
+enum service_event { SERVICE_HANGUP, SERVICE_RING };
 
 size_t service_sizeof();
-void service_init(struct service *sv, uint16_t port, const char *key, const char *capture, const char *playback,
-        void (*handler)(const uint8_t uid[20], void *args), void *args);
+void service_init(struct service *sv, uint16_t port, const char *key, const char *capture, const char *playback, uint32_t bitrate,
+        void (*handler)(enum service_event event, const uint8_t uid[20], void *args), void *args);
 
 void service_pollfd(struct service *sv, int fd, void (*handler)(void *args), void *args);
 void service_wait(struct service *sv, int timeout);

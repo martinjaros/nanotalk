@@ -19,36 +19,17 @@
 #include <string.h>
 #include <getopt.h>
 #include <sys/ioctl.h>
-#include <sys/un.h>
 #include <arpa/inet.h>
 
 #include "debug.h"
 #include "util.h"
 #include "service.h"
 
-struct app
+static void input_handler(struct service *sv)
 {
-    int listenfd, clientfd;
-    struct service *sv;
-};
-
-static void connection_handler(struct app *app);
-static void input_handler(struct app *app)
-{
-    size_t len = 0;
-    int res = ioctl(app->clientfd, FIONREAD, &len); assert(res == 0);
+    int len = 0, res = ioctl(STDIN_FILENO, FIONREAD, &len); assert(res == 0);
     char buffer[len + 1], *ptr; buffer[len] = 0;
-
-    res = recv(app->clientfd, buffer, len, 0);
-    if(res <= 0)
-    {
-        INFO("Client disconnected");
-        close(app->clientfd); app->clientfd = -1;
-        service_pollfd(app->sv, app->listenfd, (void(*)(void*))connection_handler, app);
-        service_hangup(app->sv);
-        return;
-    }
-    assert(res == len);
+    if(read(STDIN_FILENO, buffer, len) != len) return;
 
     ptr = strtok(buffer, "\n");
     while(ptr)
@@ -58,42 +39,38 @@ static void input_handler(struct app *app)
         {
             uint8_t uid[20]; char c, str_addr[16]; struct in_addr addr; uint16_t port;
             if(unhexify(ptr + 4, uid, 20) && (sscanf(ptr + 44, " %15[^:]:%hu%c", str_addr, &port, &c) == 2) && (inet_aton(str_addr, &addr)))
-            { INFO("Adding %s", ptr + 4); service_add(app->sv, uid, addr.s_addr, htons(port)); } else WARN("Parse error");
+            { INFO("Adding %s", ptr + 4); service_add(sv, uid, addr.s_addr, htons(port)); } else WARN("Parse error");
         }
         else if((len == 45) && (memcmp(ptr, "DIAL ", 5) == 0))
         {
             uint8_t uid[20];
-            if(unhexify(ptr + 5, uid, 20)) { INFO("Dialing %s", ptr + 5); service_dial(app->sv, uid); } else WARN("Parse error");
+            if(unhexify(ptr + 5, uid, 20)) { INFO("Dialing %s", ptr + 5); service_dial(sv, uid); } else WARN("Parse error");
         }
-        else if((len == 6) && (memcmp(ptr, "ANSWER", 6) == 0)) { INFO("Answering"); service_answer(app->sv); }
-        else if((len == 6) && (memcmp(ptr, "HANGUP", 6) == 0)) { INFO("Hangup"); service_hangup(app->sv); }
+        else if((len == 6) && (memcmp(ptr, "ANSWER", 6) == 0)) { INFO("Answering"); service_answer(sv); }
+        else if((len == 6) && (memcmp(ptr, "HANGUP", 6) == 0)) { INFO("Hangup"); service_hangup(sv); }
         else INFO("Unknown input: %s", ptr);
         ptr = strtok(NULL, "\n");
     }
 }
 
-static void connection_handler(struct app *app)
+static void service_handler(enum service_event event, const uint8_t uid[20], struct service *sv)
 {
-    app->clientfd = accept(app->listenfd, NULL, NULL); assert(app->clientfd > 0);
-    service_pollfd(app->sv, app->clientfd, (void(*)(void*))input_handler, app);
-    service_pollfd(app->sv, app->listenfd, NULL, NULL);
-    INFO("Client connected");
-}
+    switch(event)
+    {
+        case SERVICE_RING:
+        {
+            char buffer[46] = "RING "; buffer[45] = '\n';
+            hexify(uid, buffer + 5, 20);
+            int res = write(STDOUT_FILENO, buffer, sizeof(buffer)); assert(res > 0);
+            break;
+        }
 
-static void service_handler(const uint8_t uid[20], struct app *app)
-{
-    if(uid)
-    {
-        if(app->clientfd == -1) { WARN("No client"); service_hangup(app->sv); return; }
-        char buffer[46] = "RING "; buffer[45] = '\n';
-        hexify(uid, buffer + 5, 20);
-        int res = send(app->clientfd, buffer, sizeof(buffer), 0); assert(res > 0);
-    }
-    else
-    {
-        if(app->clientfd == -1) { WARN("No client"); return; }
-        const char buffer[] = "HANGUP\n";
-        int res = send(app->clientfd, buffer, sizeof(buffer), 0); assert(res > 0);
+        case SERVICE_HANGUP:
+        {
+            const char buffer[7] = "HANGUP\n";
+            int res = write(STDOUT_FILENO, buffer, sizeof(buffer)); assert(res > 0);
+            break;
+        }
     }
 }
 
@@ -101,57 +78,50 @@ int main(int argc, char **argv)
 {
     const char* version = PACKAGE_STRING "\nCopyright (C) 2015 - Martin Jaros <" PACKAGE_BUGREPORT ">\n" PACKAGE_URL;
     const char* help = "Usage: %s [OPTIONS]\n"
-        "   --help              Print help\n"
-        "   --version           Print version\n"
-        "   --port=NUM          Set port number, default 5004\n"
-        "   --key=FILE          Set key file, default `/etc/ssl/private/dvs.key`\n"
-        "   --socket=FILE       Set unix socket, default `/tmp/dvs`\n"
-        "   --capture=DEV       Set ALSA capture device\n"
-        "   --playback=DEV      Set ALSA playback device\n"
-        "   --debug=NUM         Set trace verbosity (0 - none, 1 - error, 2 - warn, 3 - info, 4 - debug), default 3\n";
+        "   -h, --help       Print help\n"
+        "   -v, --version    Print version\n"
+        "   -p, --port       Set port number, default 5004\n"
+        "   -k, --key        Set key file, default `/etc/ssl/private/nanotalk.key`\n"
+        "   -r, --bitrate    Set bitrate, default 32000\n"
+        "   -i, --capture    Set ALSA capture device\n"
+        "   -o, --playback   Set ALSA playback device\n"
+        "   -d, --debug      Set trace verbosity (0 - none, 1 - error, 2 - warn, 3 - info, 4 - debug), default 3\n";
 
     const struct option options[] =
     {
-        { "help",      no_argument,       NULL, 0 },
-        { "version",   no_argument,       NULL, 0 },
-        { "port",      required_argument, NULL, 0 },
-        { "key",       required_argument, NULL, 0 },
-        { "socket",    required_argument, NULL, 0 },
-        { "capture",   required_argument, NULL, 0 },
-        { "playback",  required_argument, NULL, 0 },
-        { "debug",     required_argument, NULL, 0 },
-        { NULL,        0,                 NULL, 0 }
+        { "help",     no_argument,       NULL, 'h' },
+        { "version",  no_argument,       NULL, 'v' },
+        { "port",     required_argument, NULL, 'p' },
+        { "key",      required_argument, NULL, 'k' },
+        { "bitrate",  required_argument, NULL, 'r' },
+        { "capture",  required_argument, NULL, 'i' },
+        { "playback", required_argument, NULL, 'o' },
+        { "debug",    required_argument, NULL, 'd' },
+        { 0 }
     };
 
-    struct sockaddr_un sockaddr = { AF_UNIX, "/tmp/dvs" };
-    char *key = "/etc/ssl/private/dvs.key", *capture = "default", *playback = "default";
-    int index = 0, debug = 3, port = 5004;
-    while(getopt_long(argc, argv, "", options, &index) == 0)
+    char opt, *key = "/etc/ssl/private/nanotalk.key", *capture = "default", *playback = "default";
+    unsigned int debug = 3, port = 5004, bitrate = 32000;
+    while((opt = getopt_long(argc, argv, "hvp:k:r:i:o:d:", options, NULL)) != -1)
     {
-        switch (index)
+        switch(opt)
         {
-            case 0: printf(help, *argv); return 0;
-            case 1: puts(version); return 0;
-            case 2: port = atol(optarg); break;
-            case 3: key = optarg; break;
-            case 4: strcpy(sockaddr.sun_path, optarg); break;
-            case 5: capture = optarg; break;
-            case 6: playback = optarg; break;
-            case 7: debug = atol(optarg); break;
+            case 'h': printf(help, *argv); return 0;
+            case 'v': puts(version); return 0;
+            case 'p': port = atol(optarg); break;
+            case 'k': key = optarg; break;
+            case 'r': bitrate = atol(optarg); break;
+            case 'i': capture = optarg; break;
+            case 'o': playback = optarg; break;
+            case 'd': debug = atol(optarg); break;
         }
     }
 
     debug_setlevel(debug);
-    INFO("Initializing: port = %d, key = %s, socket = %s", port, key, sockaddr.sun_path);
+    INFO("Initializing: port = %u, key = %s", port, key);
 
-    char container[service_sizeof()];
-    struct app app = { socket(AF_UNIX, SOCK_STREAM, 0), -1, (struct service*)container }; assert(app.listenfd > 0);
-
-    unlink(sockaddr.sun_path);
-    if(bind(app.listenfd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) { ERROR("Cannot bind unix socket"); abort(); }
-    int res = listen(app.listenfd, 1); assert(res == 0);
-
-    service_init(app.sv, port, key, capture, playback, (void(*)(const uint8_t*, void*))service_handler, &app);
-    service_pollfd(app.sv, app.listenfd, (void(*)(void*))connection_handler, &app);
-    while(1) service_wait(app.sv, -1);
+    char container[service_sizeof()]; struct service *sv = (struct service*)container;
+    service_init(sv, port, key, capture, playback, bitrate, (void(*)(enum service_event, const uint8_t*, void*))service_handler, sv);
+    service_pollfd(sv, STDIN_FILENO, (void(*)(void*))input_handler, sv);
+    while(1) service_wait(sv, -1);
 }

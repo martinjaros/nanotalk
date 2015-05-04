@@ -61,11 +61,11 @@ struct service
     size_t keylen;
 
     struct media *media;
-    uint32_t seqnum_capture, seqnum_playback;
+    uint32_t seqnum_capture, seqnum_playback, packet_size;
 
     #define NFDS 32
     struct { void (*handler)(void *args); void *args; } fd_handlers[NFDS];
-    void (*state_handler)(const uint8_t uid[20], void *args);
+    void (*state_handler)(enum service_event event, const uint8_t uid[20], void *args);
     void *state_args;
 };
 
@@ -77,7 +77,7 @@ static void lookup_handler(struct service *sv)
     {
         WARN("No route");
         sv->state = STATE_IDLE;
-        sv->state_handler(NULL, sv->state_args);
+        sv->state_handler(SERVICE_HANGUP, NULL, sv->state_args);
         struct itimerspec its = { { 0, 0 }, { 0, 0 } };
         int res = timerfd_settime(sv->timerfd, 0, &its, NULL); assert(res == 0);
         return;
@@ -173,7 +173,7 @@ static void socket_handler(struct service *sv)
                 sv->addr = addr.sin_addr.s_addr;
                 sv->port = addr.sin_port;
                 sv->state = STATE_RINGING;
-                sv->state_handler(sv->dstid, sv->state_args);
+                sv->state_handler(SERVICE_RING, sv->dstid, sv->state_args);
             }
             else if(sv->state == STATE_ESTABLISHED)
             {
@@ -235,7 +235,7 @@ static void socket_handler(struct service *sv)
             if(sv->state == STATE_ESTABLISHED) media_stop(sv->media);
             INFO("Disconnected by peer");
             sv->state = STATE_IDLE;
-            sv->state_handler(NULL, sv->state_args);
+            sv->state_handler(SERVICE_HANGUP, NULL, sv->state_args);
             break;
         }
 
@@ -264,7 +264,7 @@ static void timer_handler(struct service *sv)
 
         case STATE_ESTABLISHED:
         {
-            uint8_t buffer[80];
+            uint8_t buffer[sv->packet_size];
             size_t len = media_pull(sv->media, buffer, sizeof(buffer));
 
             uint8_t tmp[sizeof(struct msg_payload) + len]; struct msg_payload *msg = (struct msg_payload*)tmp;
@@ -346,8 +346,8 @@ void service_wait(struct service *sv, int timeout)
         sv->fd_handlers[event.data.fd].handler(sv->fd_handlers[event.data.fd].args);
 }
 
-void service_init(struct service *sv, uint16_t port, const char *key, const char *capture, const char *playback,
-        void (*handler)(const uint8_t uid[20], void *args), void *args)
+void service_init(struct service *sv, uint16_t port, const char *key, const char *capture, const char *playback, uint32_t bitrate,
+        void (*handler)(enum service_event event, const uint8_t uid[20], void *args), void *args)
 {
     sv->state = STATE_IDLE;
     sv->state_handler = handler;
@@ -368,6 +368,8 @@ void service_init(struct service *sv, uint16_t port, const char *key, const char
     crypto_init(sv->crypto, key, sv->srcid);
     sv->media = (struct media*)((void*)sv + sizeof(struct service) + crypto_sizeof());
     media_init(sv->media, capture, playback);
+    sv->packet_size = bitrate / 8 / 50;
+    INFO("Media: bitrate = %u, capture = %s, playback = %s", bitrate, capture, playback);
 
     char tmp[128]; INFO("User ID is %.40s", hexify(sv->srcid, tmp, 20));
 }

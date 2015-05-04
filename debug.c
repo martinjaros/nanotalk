@@ -21,14 +21,14 @@
 
 #include "debug.h"
 
-static int threshold = 0;
+static unsigned int threshold = 0;
 
-void debug_setlevel(int level)
+void debug_setlevel(unsigned int level)
 {
     threshold = level;
 }
 
-void debug_printf(int level, const char *file, int line, const char *msg, ...)
+void debug_printf(unsigned int level, const char *file, unsigned int line, const char *msg, ...)
 {
     if(level > threshold) return;
 
@@ -36,16 +36,16 @@ void debug_printf(int level, const char *file, int line, const char *msg, ...)
     clock_gettime(CLOCK_REALTIME, &ts);
 
     char buffer[1024];
-    int num = snprintf(buffer, sizeof(buffer), "%.2ld:%.2ld:%.2ld.%.3ld [%ld] (%s:%d) %s - ",
+    int num = snprintf(buffer, sizeof(buffer), "%.2lu:%.2lu:%.2lu.%.3lu [%lu] (%s:%u) %s - ",
                        ts.tv_sec / 3600 % 24, ts.tv_sec / 60 % 60, ts.tv_sec % 60, ts.tv_nsec / 1000000,
                        syscall(SYS_gettid), file, line, level == 1 ? "ERROR" : level == 2 ? "WARN" : level == 3 ? "INFO" : "DEBUG");
     assert(num > 0);
 
     va_list args;
     va_start(args, msg);
-    int vnum = vsnprintf(buffer + num, sizeof(buffer) - num, msg, args); assert(vnum > 0);
+    int vnum = vsnprintf(buffer + num, sizeof(buffer) - num - 1, msg, args); assert(vnum > 0);
     buffer[num + vnum] = '\n';
     va_end(args);
 
-    fwrite(buffer, 1, num + vnum + 1, stdout);
+    num = write(STDERR_FILENO, buffer, num + vnum + 1); assert(num > 0);
 }

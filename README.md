@@ -1,32 +1,24 @@
-# Distributed voice service
+# Nanotalk voice client
 
-This is a distributed voice service daemon.
-The service listens for commands at `/tmp/dvs` by default.
+This is a simple, distributed voice client for Linux desktop.
+After `make install` two files will be installed - `nanotalk` and `ntclient`,
+run `ntclient` startup script for the GUI. Python with Gtk+ support is needed; see script source for details.
 
-Following commands are supported:
- * `ADD <ID> <ADDR>:<PORT>` - Add static route
- * `DIAL <ID>` - Dial node
- * `ANSWER` - Accept incoming call
- * `HANGUP` - Cancel call
+There are two configuration files loaded at startup:
 
-Following responses are sent by the service:
- * `RING <ID>` - Incoming call
- * `HANGUP` - Disconnected by peer
-
-Commands are delimited by newlines.
-The ID is 20 bytes long and is formated as an uppercase hex string.
-The addresses use dot-decimal notation.
+ * `~/.nanotalk/routes` - Contains routing information; format is `<ID> <IP>:<PORT>\n` per route
+ * `~/.nanotalk/contacts` - Contains contact names; format is `<ID> <NAME>\n` per contact
 
 Following options are supported:
 
-    --help     Print help
-    --version  Print version
-    --port     Set port number, default 5004
-    --key      Set key file, default `/etc/ssl/private/dvs.key`
-    --socket   Set UNIX socket, default `/tmp/dvs`
-    --capture  Set ALSA capture device
-    --playback Set ALSA playback device
-    --debug    Set trace verbosity
+    -h, --help       Print help
+    -v, --version    Print version
+    -p, --port       Set port number, default 5004
+    -k, --key        Set key file, default `/etc/ssl/private/nanotalk.key`
+    -r, --bitrate    Set bitrate, default 32000
+    -i, --capture    Set ALSA capture device
+    -o, --playback   Set ALSA playback device
+    -d, --debug      Set trace verbosity
 
 If building from git, use `autoreconf -i` to generate the configure script.
 

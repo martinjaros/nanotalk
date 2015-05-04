@@ -1,0 +1,122 @@
+#!/usr/bin/env python
+#
+# This is a simple Gtk+ systray applet for nanotalk client.
+#
+# Configuration files loaded at startup:
+#    ~/.nanotalk/routes     Contains routing information; format is "<ID> <IP>:<PORT>\n" per route
+#    ~/.nanotalk/contacts   Contains contact names; format is "<ID> <NAME>\n" per contact
+#
+# This script sends following commands to the service:
+#    "ADD <ID> <ADDR>:<PORT>\n"   Add static route
+#    "DIAL <ID>\n"                Dial node
+#    "ANSWER\n"                   Accept incoming call
+#    "HANGUP\n"                   Cancel call
+#
+# Following responses are sent by the service:
+#    "RING <ID>\n"   Incoming call
+#    "HANGUP\n"      Disconnected by peer
+#
+# Commands are delimited by newlines.
+# The ID is 20 bytes long and is formated as an uppercase hex string.
+# The addresses use dot-decimal notation.
+#
+# Following options are supported and passed to the service:
+#   -h, --help       Print help
+#   -v, --version    Print version
+#   -p, --port       Set port number, default 5004
+#   -k, --key        Set key file, default /etc/ssl/private/nanotalk.key
+#   -r, --bitrate    Set bitrate, default 32000
+#   -i, --capture    Set ALSA capture device
+#   -o, --playback   Set ALSA playback device
+#   -d, --debug      Set trace verbosity
+
+import os, sys, subprocess, gobject, gtk
+
+class Application:
+    def __init__(self, proc):
+        self.dialog = None
+        self.proc = proc
+        gobject.io_add_watch(self.proc.stdout, gobject.IO_IN, self.receive)
+        gobject.io_add_watch(self.proc.stdout, gobject.IO_HUP, lambda *args: gtk.mainquit() or False)
+
+        path = os.path.expanduser('~/.nanotalk/')
+        if not os.path.exists(path): os.makedirs(path)
+        with open(path + 'routes', 'a+') as f: self.proc.stdin.write(''.join('ADD %s\n' % s for s in f.read().splitlines()))
+
+        # Left click menu
+        self.contacts = {}
+        self.lbmenu = gtk.Menu()
+        with open(path + 'contacts', 'a+') as f:
+            for line in f.read().splitlines():
+                id, name = line.split(' ', 1)
+                item = gtk.MenuItem(name)
+                item.connect('activate', self.dial, id)
+                self.lbmenu.append(item)
+                self.contacts[id] = name
+        self.lbmenu.show_all()
+
+        # Right click menu
+        self.rbmenu = gtk.Menu()
+        item = gtk.ImageMenuItem(gtk.STOCK_QUIT)
+        item.connect('activate', lambda *args: gtk.mainquit())
+        self.rbmenu.append(item)
+        self.rbmenu.show_all()
+
+        # Status icon
+        self.tray = gtk.StatusIcon()
+        self.tray.connect('activate', self.lbclick)
+        self.tray.connect('popup-menu', self.rbclick)
+        self.set_state(0)
+
+    def set_state(self, active):
+        self.active = active
+        self.tray.set_tooltip('Hangup' if active else 'Dial')
+        self.tray.set_from_file('/usr/share/icons/gnome/scalable/actions/call-%s-symbolic.svg' % ('end' if active else 'start'))
+
+    def dial(self, item, id):
+        self.proc.stdin.write('DIAL %s\n' % id)
+        self.set_state(1)
+
+    def hangup(self):
+        self.proc.stdin.write('HANGUP\n')
+        self.set_state(0)
+
+    def answer(self, dialog, response):
+        self.dialog = dialog.destroy()
+        if self.active:
+            if response == gtk.RESPONSE_YES:
+                self.proc.stdin.write('ANSWER\n')
+            else:
+                self.proc.stdin.write('HANGUP\n')
+                self.set_state(0)
+
+    def receive(self, source, cond):
+        msg = self.proc.stdout.readline()
+        if 'HANGUP' in msg:
+            self.set_state(0)
+            if self.dialog: self.dialog = self.dialog.destroy()
+        elif 'RING' in msg:
+            id = msg.split()[1]
+            self.set_state(1)
+            self.dialog = gtk.MessageDialog(type = gtk.MESSAGE_QUESTION, buttons = gtk.BUTTONS_YES_NO)
+            self.dialog.set_markup('Answer call from `%s` ?' % (self.contacts[id] if id in self.contacts else 'unknown'))
+            self.dialog.connect('response', self.answer)
+            self.dialog.show()
+        return True
+
+    def lbclick(self, tray):
+        if self.active: self.hangup()
+        else: self.lbmenu.popup(None, None, gtk.status_icon_position_menu, 0, gtk.get_current_event_time(), tray)
+
+    def rbclick(self, tray, button, time):
+        self.rbmenu.popup(None, None, gtk.status_icon_position_menu, button, time, tray)
+
+
+if __name__ == "__main__":
+    proc = subprocess.Popen(['nanotalk'] + sys.argv[1:], stdin = subprocess.PIPE, stdout = subprocess.PIPE)
+    try:
+        Application(proc)
+        gtk.main()
+    finally:
+        proc.terminate()
+

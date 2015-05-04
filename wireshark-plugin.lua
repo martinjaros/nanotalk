@@ -1,10 +1,10 @@
--- Distributed voice service protocol plugin
+-- Nanotalk voice service protocol plugin
 
-local proto = Proto("dvs", "Distributed voice service")
+local proto = Proto("nanotalk", "Nanotalk voice service")
 
 function proto.dissector(buffer, info, tree)
 
-    info.cols.protocol = "DVS"
+    info.cols.protocol = "NANOTALK"
 
     local function wrap(x, n) return x:len() < n and tostring(x) or tostring(x(0, n)) .. "..." end
     local subtree = tree:add(proto, buffer())
