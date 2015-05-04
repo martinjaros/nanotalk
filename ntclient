@@ -37,20 +37,26 @@ class Application:
         gobject.io_add_watch(self.proc.stdout, gobject.IO_IN, self.receive)
         gobject.io_add_watch(self.proc.stdout, gobject.IO_HUP, lambda *args: gtk.mainquit() or False)
 
+        # Add routes
         path = os.path.expanduser('~/.nanotalk/')
         if not os.path.exists(path): os.makedirs(path)
-        with open(path + 'routes', 'a+') as f: self.proc.stdin.write(''.join('ADD %s\n' % s for s in f.read().splitlines()))
+        with open(path + 'routes', 'a+') as f:
+            for line in f.read().splitlines():
+                line = line.split('#')[0].strip()
+                if len(line) > 0: self.proc.stdin.write('ADD %s\n' % line)
 
         # Left click menu
         self.contacts = {}
         self.lbmenu = gtk.Menu()
         with open(path + 'contacts', 'a+') as f:
             for line in f.read().splitlines():
-                id, name = line.split(' ', 1)
-                item = gtk.MenuItem(name)
-                item.connect('activate', self.dial, id)
-                self.lbmenu.append(item)
-                self.contacts[id] = name
+                line = line.split('#')[0].strip()
+                if len(line) > 0:
+                    id, name = line.split(' ', 1)
+                    item = gtk.MenuItem(name)
+                    item.connect('activate', self.dial, id)
+                    self.lbmenu.append(item)
+                    self.contacts[id] = name
         self.lbmenu.show_all()
 
         # Right click menu
