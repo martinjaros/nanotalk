@@ -21,8 +21,6 @@
 # The addresses use dot-decimal notation.
 #
 # Following options are supported and passed to the service:
-#   -h, --help       Print help
-#   -v, --version    Print version
 #   -p, --port       Set port number, default 5004
 #   -k, --key        Set key file, default /etc/ssl/private/nanotalk.key
 #   -r, --bitrate    Set bitrate, default 32000
@@ -113,7 +111,8 @@ class Application:
 
 
 if __name__ == "__main__":
-    proc = subprocess.Popen(['nanotalk'] + sys.argv[1:], stdin = subprocess.PIPE, stdout = subprocess.PIPE)
+    sys.argv[0] = 'nanotalk'
+    proc = subprocess.Popen(sys.argv, stdin = subprocess.PIPE, stdout = subprocess.PIPE)
     try:
         Application(proc)
         gtk.main()
